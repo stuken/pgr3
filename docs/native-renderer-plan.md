@@ -14,7 +14,7 @@ than repeating it. SDK: rexglue 0.10.0.
 | 0. Baseline and tooling | **In progress.** The xenos build boots into a race under a scripted pad. Ported from rr6: `pgr3_input_script`, `pgr3_null_audio`, `pgr3_dump_frames`, `pgr3_trace_frame`, the abort logger, `scripts/re/funcdb.py`; added `pgr3_dump_raw` and `scripts/re/match_names.py`. See Phase 0 findings. |
 | 1. Shader extraction | **Done.** The `pgr3_shaders` build target extracts **309** shaders from the patched image (`pgr3_dump_image` + `scripts/extract_shaders.py`). The runtime census covers all 309, byte for byte, with nothing missing. See Phase 1 findings. |
 | 2. XenosRecomp | **Done.** All 309 shaders compile to DXIL and SPIR-V with `REBLUE_RECOMP PGR3_RECOMP`, on branch `pgr3` of the fork in `thirdparty/XenosRecomp` (uncommitted). RR6's 176 still compile, and their HLSL changes only as intended. See Phase 2 findings. |
-| 3. Build integration | Not started. |
+| 3. Build integration | **Done.** Both configurations build. Every build makes the shader cache; `PGR3_NATIVE_GPU=ON` builds `pgr3.exe` (D3D12) and `pgr3_vk.exe` (Vulkan) on plume with the cache and 548 prelinked variants. Until Phase 5 they log that the renderer is missing and exit. |
 | 4. D3D identification (XDK 2099) | **Started early** (Phase 0 needed it): `config/d3d.toml` names 70 functions matched against rr6's, `config/xapi.toml` the XInput pair. The device layout is checked only where the dump and trace tools read it. |
 | 5. Native renderer bring-up | Not started. |
 | 6. Hardening and performance | Not started. |
@@ -103,6 +103,9 @@ VB/IB creators and the `Get*` accessors (see the header of `config/d3d.toml`).
   `+0x4FD8`, draw fields `+0x34D0`). The rest is Phase 4 work.
 - **Fences:** `InsertFence` `0x823D1280`, `IsFencePending` `0x823D12B8`,
   `BlockOnFence` `0x823D0D50`.
+- **Shader creation:** `D3DDevice_CreateVertexShader` `0x823CA900` and
+  `D3DDevice_CreatePixelShader` `0x823CA810` take the container in r3 and
+  return the shader object, as in 2135.
 
 **The xenos baseline runs.** Under `pgr3_input_script` the game boots (logo
 at frame ~900, Press Start at ~1500, profile at ~2100) and A presses take it
@@ -360,6 +363,49 @@ errors by kind) and `scratch/hlsl_diff.py` (compares two HLSL dumps).
 **Exit:** both configurations build; the native exe links the unused cache and
 the shader set regenerates when the XEX, the patch, the recompiler or
 `shader_common.h` changes.
+
+**Done.**
+
+- **Submodules** (`.gitmodules`), each cloned from rr6's local copy with
+  `origin` set to the GitHub fork: `thirdparty/XenosRecomp` (branch `pgr3`,
+  `cd59cf1`; **not pushed yet**, so a fresh clone cannot fetch it),
+  `thirdparty/plume` (`rr6`, `2f9fb4c`, with its four `contrib/`
+  submodules), and `thirdparty/rexglue-sdk` (`main`, `c53c48a`, the commit
+  rr6 pins and the installed SDK was built from). The SDK checkout is a pin
+  only: the build still uses an installed SDK (`CMAKE_PREFIX_PATH`), and its
+  nested submodules are not checked out. miniz and zstd are vendored, and
+  `licenses/` carries re:Blue's BSD 3-Clause text for the files ported from it.
+- **Build files:** `thirdparty/CMakeLists.txt` builds XenosRecomp with
+  `REBLUE_RECOMP PGR3_RECOMP`. `cmake/shader_cache.cmake` has
+  `pgr3_shader_cache()` for image dump, extraction, recompile,
+  `pgr3_shader_cache_gen` and `pgr3_shader_hlsl_dump`. `cmake/native_gpu.cmake`
+  and `cmake/shaders.cmake` are rr6's, renamed; the renderer's own HLSL list
+  waits for Phase 5. The top-level `CMakeLists.txt` splits sources into those
+  every build shares, the xenos-only ones (census, resolve dump) and the
+  native ones (`src/gpu/**`).
+- **Shader pipeline in every build:** `pgr3_shader_cache` (the generated
+  `shader_cache.cpp`, 309 entries) compiles in the xenos build too, as rr6's
+  does. In the native build `pgr3_prelink` DXC-links every spec-constant subset:
+  548 variants (204 PS x 2 alpha-test states, 70 VS x 2 normal-format states),
+  6.1 MB of DXIL deflated to 2.2 MB, with no failures.
+- **App:** under `PGR3_NATIVE_GPU`, `OnPreSetup` sets `config.graphics =
+  nullptr`. `OnPreLaunchModule` logs that the renderer is missing, flushes the
+  log and exits with code 1. A queued `QuitFromUIThread` is not enough: the
+  SDK resumes the guest's main thread as soon as the hook returns. The
+  `Settings::Init` and plume bring-up steps move to Phase 5 with the renderer
+  they belong to. `src/gpu/present_count_stub.cpp` stands in for the
+  renderer's present counter, which `pgr3_input_script` reads.
+- **Regeneration checked:** touching `shader_common.h` reruns the recompile;
+  touching `default.xexp` reruns the image dump, extraction and recompile.
+
+Building the native configuration (its own build directory, so the xenos
+build is kept):
+
+```bat
+cmake --preset win-amd64-relwithdebinfo -B out/build/native-relwithdebinfo ^
+  -DPGR3_NATIVE_GPU=ON -DCMAKE_PREFIX_PATH=<sdk install>
+cmake --build out/build/native-relwithdebinfo
+```
 
 ### Phase 4: Identify XDK 2099 D3D
 
