@@ -1,0 +1,7 @@
+# XAPI functions statically linked into PGR3's default.xex that pgr3's host
+# code hooks. Identified from their bodies (scripts/re/funcdb.py); both are the
+# same as RR6's.
+
+[functions]
+0x823C55F8 = { name = "XInputGetCapabilities" } # tail-calls XamInputGetCapabilities
+0x823C5600 = { name = "XInputGetState" } # (user, state) -> XamInputGetState(user, 0, state)

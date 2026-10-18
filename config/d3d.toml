@@ -1,0 +1,98 @@
+# XDK 2.0.2099.6 Direct3D, as statically linked into PGR3's default.xex (with
+# title update 0.0.5.1 applied, which is what codegen and the runtime load).
+#
+# Matched against rr6's XDK 2135 names (D:\rr6\config\d3d.toml) by instruction
+# shape with scripts/re/match_names.py, then checked with funcdb.py. Most bodies
+# are identical to 2135's apart from branch targets. Left out until they are
+# confirmed: D3DTexture_LockRect, D3DCubeTexture_LockRect,
+# D3DTexture_GetLevelDesc, D3DVolumeTexture_GetLevelDesc (one-instruction tail
+# calls that match several thunks), D3DDevice_CreateVertexBuffer/IndexBuffer
+# (weak matches), D3DDevice_GetViewport, D3DDevice_GetRenderTarget and
+# D3DDevice_GetDepthStencilSurface (the best match, sub_823D1280, is
+# D3DDevice_InsertFence).
+#
+# 2099 has no D3DDevice_Present: the game's frame end (sub_821507A0) calls
+# D3DDevice_Resolve (flags 0x300) and then D3DDevice_Swap itself. Swap has one
+# other caller, sub_823DFC28, which nothing calls directly.
+#
+# D3DDevice layout, where checked against 2135 (rr6's d3d.toml header):
+#   +0x0480  fetch constants (SetTexture is identical to 2135)
+#   +0x30F8  render targets[4] (SetRenderTarget: (index + 3134) * 4)
+#   +0x30F4  index buffer, +0x310C streams (SetIndices/SetStreamSource identical)
+#   +0x31A0  textures[]
+#   +0x34D0  draw fields at 2135's +0x34E0, +0x34D8 at +0x34E8 (DrawVertices)
+#   +0x4FD8  vertex shader (2135: +0x4FE8)
+# Past about +0x32B0 the fields sit 0x10 lower than in 2135; re-derive the
+# rest in Phase 4 before relying on it.
+
+[functions]
+0x823C52B8 = { name = "XMemAlloc" }
+0x823C5350 = { name = "XMemFree" }
+0x823C9DB0 = { name = "D3DDevice_SetVertexShaderConstantF" }
+0x823C9EF8 = { name = "D3DDevice_SetPixelShaderConstantF" }
+0x823CA098 = { name = "D3DPixelShader_Release" } # called by SetPixelShader
+0x823CA150 = { name = "D3DVertexShader_Release" } # called by SetVertexShader
+0x823CA208 = { name = "D3DDevice_SetPixelShader" }
+0x823CA578 = { name = "D3DDevice_SetVertexShader" }
+0x823CA5E0 = { name = "D3DDevice_CreateVertexDeclaration" }
+0x823CA6A0 = { name = "D3DVertexDeclaration_Release" }
+0x823CA760 = { name = "D3DDevice_SetShaderGPRAllocation" }
+0x823CA810 = { name = "D3DDevice_CreatePixelShader" }
+0x823CA900 = { name = "D3DDevice_CreateVertexShader" }
+0x823CA9D8 = { name = "D3DDevice_SetVertexDeclaration" }
+0x823CADB8 = { name = "D3DDevice_Swap" } # calls VdSwap
+0x823CDAD8 = { name = "D3DDevice_SetScissorRect" }
+0x823CDBA0 = { name = "D3DDevice_SetViewport" }
+0x823CDD90 = { name = "D3DDevice_SetStreamSource" }
+0x823CDE30 = { name = "D3DDevice_SetIndices" }
+0x823CDFD0 = { name = "D3DDevice_SetClipPlane" }
+0x823CE0A0 = { name = "D3D__ResetFrameState" }
+0x823CE288 = { name = "D3DDevice_SetRenderTarget" }
+0x823CE620 = { name = "D3DDevice_SetDepthStencilSurface" }
+0x823CEF68 = { name = "D3DDevice_Resolve" }
+0x823D00E8 = { name = "D3D_AllocDevice" }
+0x823D04E8 = { name = "D3D__AllocCommandMemory" }
+0x823D0D50 = { name = "D3DDevice_BlockOnFence" } # (fence); waits through 0x823D0B48, reason 13
+0x823D1198 = { name = "D3D__MakeSpace" }
+0x823D1280 = { name = "D3DDevice_InsertFence" } # returns device+10396, kicks via MakeSpace
+0x823D12B8 = { name = "D3DDevice_IsFencePending" }
+0x823D14F0 = { name = "D3DDevice_SetRingBufferParameters" } # calls VdInitializeRingBuffer
+0x823D19E0 = { name = "D3DTexture_UnlockRect" }
+0x823D19F8 = { name = "D3DSurface_UnlockRect" }
+0x823D1A10 = { name = "XGGetBlockDimensions" }
+0x823D2D40 = { name = "D3D__LockRect" }
+0x823D2DD0 = { name = "D3D__LockBox" }
+0x823D3148 = { name = "D3DBaseTexture_GetLevelCount" }
+0x823D3160 = { name = "D3DTexture_GetSurfaceLevel" }
+0x823D3220 = { name = "D3DCubeTexture_GetCubeMapSurface" }
+0x823D32D0 = { name = "D3DVolumeTexture_GetVolumeLevel" }
+0x823D3380 = { name = "D3DDevice_CreateTexture" }
+0x823D34A0 = { name = "D3DDevice_CreateSurface" }
+0x823D37A8 = { name = "D3DSurface_GetDesc" }
+0x823D3800 = { name = "D3DSurface_LockRect" }
+0x823D3828 = { name = "D3DVolume_GetDesc" }
+0x823D3870 = { name = "D3DVolume_LockBox" }
+0x823D3890 = { name = "D3DDevice_SetTexture" }
+0x823D3A18 = { name = "D3DDevice_BeginVertices" }
+0x823D3C98 = { name = "D3DDevice_EndVertices" }
+0x823D3CB8 = { name = "D3DDevice_DrawVerticesUP" }
+0x823D3D40 = { name = "D3DDevice_DrawVertices" }
+0x823D3F80 = { name = "D3DDevice_DrawIndexedVertices" }
+0x823D4220 = { name = "D3DResource_AddRef" }
+0x823D4288 = { name = "D3DResource_GetType" }
+0x823D4338 = { name = "D3DResource_Destroy" }
+0x823D4498 = { name = "D3DResource_Lock" }
+0x823D46B8 = { name = "D3DResource_Unlock" }
+0x823D47A0 = { name = "D3DResource_Release" }
+0x823D4888 = { name = "D3DVertexBuffer_Lock" }
+0x823D48F8 = { name = "D3DVertexBuffer_Unlock" }
+0x823D4908 = { name = "D3DIndexBuffer_Lock" }
+0x823D4970 = { name = "D3DIndexBuffer_Unlock" }
+0x823D5158 = { name = "D3DDevice_ClearF" } # called by Clear
+0x823D5818 = { name = "D3DDevice_Clear" }
+0x823D58E0 = { name = "D3DDevice_Release" }
+0x823D59F8 = { name = "Direct3D_CreateDevice" }
+0x823D8EA0 = { name = "D3D__FlushCachedRange" }
+0x823DC6A0 = { name = "D3D__InitializeStateTables" }
+0x823DCB78 = { name = "D3DDevice_Initialize" }
+0x823DCD90 = { name = "D3DDevice_Shutdown" }

@@ -12,6 +12,12 @@
 
 #include "icon.generated.h"
 
+#include "platform/guest_abort_log.h"
+#include "platform/silent_audio.h"
+#include <rex/cvar.h>
+
+REXCVAR_DECLARE(bool, pgr3_null_audio);
+
 class Pgr3App : public rex::ReXApp {
  public:
   using rex::ReXApp::ReXApp;
@@ -24,6 +30,8 @@ class Pgr3App : public rex::ReXApp {
 
   void OnPreSetup(rex::RuntimeConfig& config) override {
 	  config.gpu_plugin = "xenos";
+      if (REXCVAR_GET(pgr3_null_audio))
+        config.audio_factory = REX_AUDIO_BACKEND(pgr3::platform::SilentAudioSystem);
 #ifdef _WIN32
       timeBeginPeriod(1);
 #endif
@@ -43,6 +51,10 @@ class Pgr3App : public rex::ReXApp {
   void OnPostSetup() override{
     window()->SetIcon(icon::kIconPNG, icon::kIconPNGSize);
     window()->SetTitle("Project Gotham Racing 3");
+  }
+
+  void OnPreLaunchModule() override {
+    pgr3::platform::InstallGuestAbortLogger();
   }
 
   // Override virtual hooks for customization:

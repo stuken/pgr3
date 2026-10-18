@@ -15,5 +15,7 @@ setjmp_address = 0x8247f3d0
 longjmp_address = 0x8247f2b0
 
 includes = [
-    "pgr3_config.toml"
+    "pgr3_config.toml",
+    "config/d3d.toml",
+    "config/xapi.toml"
 ]
