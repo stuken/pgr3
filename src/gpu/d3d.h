@@ -363,6 +363,13 @@ static_assert(offsetof(D3DDevice, tileCount) == 0x32AC);
 static_assert(offsetof(D3DDevice, vertexShader) == 0x4FD8);
 static_assert(offsetof(D3DDevice, behaviorFlags) == 0x5050);
 
+// Head of the device's query-slot pool (D3DDevice_CreateQuery takes result
+// slots from it through sub_823D5DD8): a page record {u8 used[8]; u32 data;
+// u32 next}. D3DDevice_Initialize leaves a full, empty record here (both used
+// words 0xFFFFFFFF), so the first allocation adds a real page after it; a
+// zeroed record would hand out slots at a null data pointer.
+constexpr u32 kDeviceQuerySlotPool = 0x4FDC;
+
 // Device fields the hooks reach by offset, 0x10 below 2135's.
 // D3D__AllocCommandMemory asks the callback D3DDevice_Initialize installs here
 // for space in the next ring segment (2135: +0x3534).

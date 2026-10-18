@@ -15,11 +15,17 @@
 #include "platform/guest_abort_log.h"
 #include "platform/silent_audio.h"
 #include <rex/cvar.h>
-#include <rex/logging.h>
-
-#include <cstdlib>
 
 REXCVAR_DECLARE(bool, pgr3_null_audio);
+
+#ifdef PGR3_NATIVE_GPU
+#include <rex/logging.h>
+
+#include "core/shutdown.h"
+#include "gpu/device.h"
+#include "gpu/imgui_overlay_drawer.h"
+#include "gpu/settings.h"
+#endif
 
 class Pgr3App : public rex::ReXApp {
  public:
@@ -33,8 +39,8 @@ class Pgr3App : public rex::ReXApp {
 
   void OnPreSetup(rex::RuntimeConfig& config) override {
 #ifdef PGR3_NATIVE_GPU
-      // Null graphics makes Runtime::Setup skip the SDK GPU; the native
-      // renderer is to come up in OnPreLaunchModule.
+      // Null graphics makes Runtime::Setup skip the SDK GPU. The plume
+      // renderer comes up in OnPreLaunchModule instead.
       config.graphics = nullptr;
       config.gpu_plugin.clear();
 #else
@@ -63,30 +69,65 @@ class Pgr3App : public rex::ReXApp {
     window()->SetTitle("Project Gotham Racing 3");
   }
 
-  void OnPreLaunchModule() override {
-    pgr3::platform::InstallGuestAbortLogger();
 #ifdef PGR3_NATIVE_GPU
-    // The native build links the shader cache but has no renderer yet
-    // (docs/native-renderer-plan.md, Phase 5), and the game cannot run
-    // without a GPU. The module launches as soon as this returns, so a queued
-    // quit would leave the guest running GPU-less; exit here instead.
-    REXLOG_ERROR("pgr3: the native renderer is not implemented yet; "
-                 "build with PGR3_NATIVE_GPU=OFF to play");
-    rex::FlushLogging();
-    std::_Exit(1);
-#endif
+  // Binds to the plume device lazily, once OnPreLaunchModule creates it. The
+  // SDK owns and tears this down.
+  std::unique_ptr<rex::ui::ImmediateDrawer> OnCreateImmediateDrawer() override {
+    return std::make_unique<pgr3::gpu::ImGuiOverlayDrawer>();
   }
 
+  // The first hook after rex::cvar::LoadConfig: the renderer's settings adopt
+  // the config file and command line here and follow later cvar writes.
+  void OnPostInitLogging() override { pgr3::gpu::Settings::Get().Init(); }
+
+  void OnPreLaunchModule() override {
+    pgr3::platform::InstallGuestAbortLogger();
+    // Registered here, where the UI thread is pumping: the shutdown sequence
+    // has to run on it.
+    pgr3::SetShutdownDispatcher([this](std::function<void()> fn) {
+      return app_context().CallInUIThread(std::move(fn));
+    });
+    pgr3::SetShutdownUIPump(
+        [this] { app_context().ExecutePendingFunctionsFromUIThread(); });
+
+    if (!pgr3::gpu::Video::CreateHostDevice(window())) {
+      REXLOG_ERROR("pgr3: native renderer init failed");
+      app_context().QuitFromUIThread();
+      return;
+    }
+    pgr3::gpu::Video::SetOverlayDrawHook(
+        [this](plume::RenderCommandList* cmd, plume::RenderFramebuffer* fb,
+               u32 w, u32 h) {
+          if (!imgui_drawer() || pgr3::IsShuttingDown() ||
+              !imgui_drawer()->HasDialogs())
+            return;
+          app_context().CallInUIThreadSynchronous([this, cmd, fb, w, h] {
+            pgr3::gpu::ReblueUIDrawContext ctx(w, h, cmd, fb);
+            imgui_drawer()->Draw(ctx);
+          });
+        });
+  }
+
+  void OnWindowPixelSizeChanged(u32, u32) override {
+    pgr3::gpu::Video::RequestResize();
+  }
+
+  bool OnWindowCloseRequested() override {
+    pgr3::RequestShutdown(pgr3::ShutdownReason::WindowClose);
+    return false;  // unreachable
+  }
+#else
+  void OnPreLaunchModule() override {
+    pgr3::platform::InstallGuestAbortLogger();
+  }
+#endif
+
   // Override virtual hooks for customization:
-  // void OnPostInitLogging() override {}
-  // void OnPreSetup(rex::RuntimeConfig& config) override {}
   // void OnLoadXexImage(std::string& xex_image) override {}
   // void OnPostLoadXexImage() override {}
-  // void OnPostSetup() override {}
   // void OnCreateDialogs(rex::ui::ImGuiDrawer* drawer) override {}
   // std::unique_ptr<rex::ui::ImGuiDialog> CreateAchievementsOverlay() override;
   // std::unique_ptr<rex::ui::AchievementNotificationDialog>
   // CreateAchievementNotificationDialog() override;
   // void OnShutdown() override {}
-  // void OnConfigurePaths(rex::PathConfig& paths) override {}
 };

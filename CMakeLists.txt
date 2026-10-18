@@ -12,8 +12,7 @@ include(CMakeDependentOption)
 # OFF keeps the SDK's xenos GPU plugin (Xenia-style emulation). ON replaces the
 # guest D3D library with the native plume renderer and the recompiled shader
 # cache (docs/native-renderer-plan.md). Hooks bind at link time, so this is a
-# build switch, not a cvar. The renderer itself is not ported yet: ON builds
-# the native exes, which refuse to start.
+# build switch, not a cvar. The renderer is being brought up (plan Phase 5).
 cmake_dependent_option(PGR3_NATIVE_GPU
     "Native plume renderer with recompiled shaders (OFF = SDK xenos plugin)"
     OFF "WIN32 OR LINUX" OFF)

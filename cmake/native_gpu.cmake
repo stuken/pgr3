@@ -1,9 +1,7 @@
 # The native renderer (PGR3_NATIVE_GPU): rr6's plume-based Xenos translation
 # layer, fed by the XenosRecomp shader cache, in place of the SDK's emulated
 # GPU. The guest's D3D library is to be replaced by REX_HOOKs in src/gpu/hooks.
-# Ported from rr6's cmake/native_gpu.cmake. Until the renderer itself is ported
-# (plan Phase 5) this builds the exes, plume, the cache and pgr3_prelink, and
-# the exes refuse to start (Pgr3App::OnPreLaunchModule).
+# Ported from rr6's cmake/native_gpu.cmake.
 #
 # Expects the pgr3 target (already through rexglue_setup_target),
 # PGR3_SOURCES, PGR3_COMMON_SOURCES, PGR3_ICON_RC, PGR3_GEN_DIR,
@@ -55,7 +53,15 @@ add_subdirectory(thirdparty/plume EXCLUDE_FROM_ALL)
 include(cmake/shaders.cmake)
 
 file(GLOB_RECURSE pgr3_native_sources CONFIGURE_DEPENDS
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/*.cpp")
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/core/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/platform/*.cpp")
+# Built from the top-level CMakeLists: PGR3_COMMON_SOURCES for both renderers,
+# and the census and resolve dump for the plugin build only.
+foreach(source IN LISTS PGR3_COMMON_SOURCES ITEMS
+        src/platform/shader_census.cpp src/platform/xenos_resolve_dump.cpp)
+    list(REMOVE_ITEM pgr3_native_sources "${CMAKE_CURRENT_SOURCE_DIR}/${source}")
+endforeach()
 # The runtime DXC shader linker has no Vulkan counterpart: SPIR-V takes the
 # spec constants as Vulkan specialization constants instead.
 set(pgr3_d3d12_sources
@@ -70,8 +76,14 @@ set_source_files_properties(
     "${CMAKE_CURRENT_SOURCE_DIR}/thirdparty/zstd/zstddeclib.c"
     PROPERTIES COMPILE_OPTIONS "-w")
 
-# The renderer's own HLSL (pgr3_host_shader, cmake/shaders.cmake) is added with
-# the renderer in Phase 5.
+foreach(shader IN ITEMS copy_vs imgui_vs)
+    pgr3_host_shader(${shader} vs_6_0)
+endforeach()
+foreach(shader IN ITEMS
+        copy_color_ps copy_depth_ps fxaa_ps gamma_correction_ps
+        pfx_occlusion_count_ps imgui_ps)
+    pgr3_host_shader(${shader} ps_6_0)
+endforeach()
 
 foreach(target IN LISTS PGR3_NATIVE_TARGETS)
     target_sources(${target} PRIVATE

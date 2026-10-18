@@ -16,7 +16,7 @@ than repeating it. SDK: rexglue 0.10.0.
 | 2. XenosRecomp | **Done.** All 309 shaders compile to DXIL and SPIR-V with `REBLUE_RECOMP PGR3_RECOMP`, on branch `pgr3` of the fork in `thirdparty/XenosRecomp` (uncommitted). RR6's 176 still compile, and their HLSL changes only as intended. See Phase 2 findings. |
 | 3. Build integration | **Done.** Both configurations build. Every build makes the shader cache; `PGR3_NATIVE_GPU=ON` builds `pgr3.exe` (D3D12) and `pgr3_vk.exe` (Vulkan) on plume with the cache and 548 prelinked variants. Until Phase 5 they log that the renderer is missing and exit. |
 | 4. D3D identification (XDK 2099) | **Done.** `config/d3d.toml` names 74 functions, including `BeginTiling`/`EndTiling` and `XPhysicalAlloc`/`Free`. `src/gpu/d3d.h` has the 2099 device and resource layouts, every field checked against PGR3's code. The render setup is confirmed: 1024x600, 2x MSAA, 7e3. See Phase 4 findings. |
-| 5. Native renderer bring-up | Not started. |
+| 5. Native renderer bring-up | **In progress.** rr6's renderer is ported and runs PGR3 on D3D12 from boot through the front end, garage and menus into a London race: course, buildings and cars render, with the HUD. Open: instanced fetches, rect lists, MSAA and depth resolves, shadows, post effects, some texture formats. See Phase 5 progress. |
 | 6. Hardening and performance | Not started. |
 | 7. Geometry Wars (`gw.xex`) | Out of scope until 5 is done. |
 
@@ -560,6 +560,81 @@ frame trace decodes the live headers with 2135's layout: VB `Common`
 
 **Exit:** the front end, garage, and a race in every city (day and night),
 replays and movies match the xenos references at 1x.
+
+### Phase 5 progress
+
+**The port.** rr6's `src/gpu`, `src/core` and `src/platform` came over with
+identifiers and the project renamed, and the word "RR6" kept where it names the
+game, so rr6's notes stay true as history. Fixes to the port itself:
+- **Addresses:** every RR6 address replaced from `gpu/d3d.h` and
+  `config/d3d.toml`.
+- **`Swap` instead of `Present`:** `D3DDevice_Swap` replaces
+  `D3DDevice_Present` and presents the front buffer's resolve target.
+- **Physical allocators:** `XPhysicalAlloc`/`XPhysicalFree` replace rr6's
+  unnamed functions.
+- **RR6- and BD-specific bits disabled:** the RR6-hash-keyed passes (race
+  resolve fit, FXAA before grading) match nothing, the precache list starts
+  empty, and Blue Dragon's render-pass global reads 0.
+- **Location table:** the vertex declaration's `static_assert` pins PGR3's
+  table.
+
+**XDK 2099 API that RR6 never used**, now handled natively:
+- **Predicated tiling** (`BeginTiling`/`EndTiling`) is used in the front end
+  (the run crashed in the guest's tiling ring code). `BeginTiling` becomes the
+  first tile's clear, `EndTiling` one whole-surface resolve. The tile count
+  stays 0, so the rest of D3D acts untiled.
+- **Queries** (`D3DDevice_CreateQuery`, `D3DQuery_Issue`/`GetData`). The
+  guest creates the objects; the device's query-slot pool head (`+0x4FDC`)
+  is seeded as `D3DDevice_Initialize` leaves it, since a zeroed head handed out
+  slots at a null pointer. `Issue` is a no-op, and `GetData` answers at once:
+  events done, occlusion 2^20 samples. That turns off occlusion culling;
+  real host queries are open.
+
+**Formats PGR3 uses that reblue and rr6 did not:**
+- **7e3 back buffer:** `0x1A22ABBF` (`k_2_10_10_10_FLOAT_EDRAM`) is now
+  mapped. `ConvertGuestFormat` also falls back to decoding the texture-format
+  field.
+- **Vertex types:**
+  - DEC3N/DEC4N normals: new `SPEC_CONSTANT_DEC3N_NORMAL`, 688 prelinked
+    variants.
+  - The 11:11:10 texcoord family (UHEND3N/UHEND3 and the signed forms):
+    `unpackUhend3n`, with three masks in shared constants `c21.w`/`c29.z`/`c29.w`.
+  - **`SHORT4` positions, which are integers**, not normalised. Bound SNORM,
+    they had shrunk the whole course and every car onto the scene origin. They
+    now bind UINT and sign-extend through bits 16+ of `g_SintTexcoords`.
+- **Textures:** `k_16` (as `R16_UNORM`) and `k_5_6_5`, which plume has no
+  format for, so it is expanded to RGBA8 on the CPU.
+
+**Bring-up tools added:**
+- `pgr3_trace_frame` decodes each draw's declaration and stream 0's header.
+- `pgr3_debug_ztest_always` and `pgr3_debug_cull_none` are experiment
+  switches.
+- Failed pipelines log their description (capped), and repeating warnings are
+  capped. The SDK's log rotates at 5 MB into `<name>.1.log`, which had been
+  hiding most of each run.
+- Test runs use `--pgr3_vsync=false`: with the display occluded (a locked or
+  remote session) the vblank clock stops and pacing falls back to a slow
+  sleep.
+
+**Open, in rough order of what is visible in a race:**
+1. **Instanced vertex fetch.** Ten VS compute their fetch index (`index mod N`
+   for per-vertex data, `index / N` for per-instance transforms, with N a
+   constant); `vs_820C4738` alone is a fifth of a race frame's indices. The
+   input assembler cannot model this. It needs vertex pulling (a raw buffer
+   load in the recompiled shader for fetches whose index register is not
+   `r0.x`), or CPU-side de-instancing.
+2. **Rect lists** (primitive 8), drawn as triangle lists, so they lose half
+   their area; post passes use them.
+3. **MSAA and depth resolves.** The scene is 2x MSAA and environment passes
+   4x; depth resolves (flags `0x4`/`0x14`) are not modelled, which also
+   leaves shadow maps empty; a 1024x600 `k_24_8_FLOAT` texture (the scene's
+   depth resolve) is sampled and rejected.
+4. **Remaining textures:** linear volume textures (64x64x32 `k_8_8_8_8`), and
+   the 512x192 one that decodes as noise.
+5. **The garage preview is overexposed,** and the race's black sky region and
+   shadow band need checking against the xenos references once 1-3 are in.
+6. Not yet compared frame by frame with the xenos references; Vulkan
+   (`pgr3_vk.exe`) not yet run.
 
 ### Phase 6: Hardening and performance
 

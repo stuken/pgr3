@@ -20,8 +20,9 @@
 # D3DDevice_Resolve (flags 0x300) and then D3DDevice_Swap itself. Swap has one
 # other caller, sub_823DFC28, which nothing calls directly.
 #
-# Beyond rr6: D3DDevice_BeginTiling/EndTiling (predicated tiling; not used in
-# races), and XPhysicalAlloc/XPhysicalFree. PGR3 also overrides XMemAlloc and
+# Beyond rr6: D3DDevice_BeginTiling/EndTiling (predicated tiling; used in the
+# front end, not in races), the query API (D3DDevice_CreateQuery, D3DQuery_*),
+# and XPhysicalAlloc/XPhysicalFree. PGR3 also overrides XMemAlloc and
 # XMemFree: the D3D library allocates through sub_8219A778 and frees through
 # sub_8219A170, so the XMemAlloc/XMemFree named here are the unused XDK
 # defaults.
@@ -105,6 +106,10 @@
 0x823D5818 = { name = "D3DDevice_Clear" }
 0x823D58E0 = { name = "D3DDevice_Release" }
 0x823D59F8 = { name = "Direct3D_CreateDevice" }
+0x823D5ED8 = { name = "D3DDevice_CreateQuery" } # (device, type, slot count) -> query; 8 event, 9 occlusion, 10 two-slot
+0x823D5FB8 = { name = "D3DQuery_Release" }
+0x823D6100 = { name = "D3DQuery_Issue" } # (query, flags): bit 1 D3DISSUE_END
+0x823D6288 = { name = "D3DQuery_GetData" } # (query, data, size, flags): four DWORD counts for occlusion; S_OK 0, S_FALSE 1
 0x823D85A8 = { name = "D3DDevice_BeginTiling" } # (dev, flags, count, rects, color, z f1, stencil r9); count at +0x32AC, rects from +0x32B0
 0x823D88D0 = { name = "D3DDevice_EndTiling" } # resolves each tile; called with BeginTiling from sub_821D78A8
 0x823D8EA0 = { name = "D3D__FlushCachedRange" }
