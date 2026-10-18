@@ -3,4 +3,4 @@
 /out/
 
 .vs/*
-scratch
+scratch__pycache__/

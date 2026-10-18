@@ -50,11 +50,14 @@ REXCVAR_DEFINE_BOOL(pgr3_dump_raw, false, kCvarGroup,
 
 REX_EXTERN(__imp__D3DDevice_Resolve);
 REX_EXTERN(__imp__D3DDevice_SetRenderTarget);
+REX_EXTERN(__imp__D3DDevice_SetDepthStencilSurface);
 REX_EXTERN(__imp__D3DDevice_DrawVertices);
 REX_EXTERN(__imp__D3DDevice_DrawIndexedVertices);
 REX_EXTERN(__imp__D3DDevice_BeginVertices);
 REX_EXTERN(__imp__D3DDevice_Clear);
 REX_EXTERN(__imp__D3DDevice_InsertFence);
+REX_EXTERN(__imp__D3DDevice_BeginTiling);
+REX_EXTERN(__imp__D3DDevice_EndTiling);
 REX_EXTERN(__imp__D3DDevice_BlockOnFence);
 
 namespace {
@@ -90,6 +93,44 @@ void TraceCall(const char *what, PPCContext &ctx, const std::string &extra) {
       t += std::format(" t{}=0x{:08X}", i, u32(tex[i]));
   PGR3_INFO("[xtrace] {}{} rt=0x{:08X}{} lr=0x{:08X}", what, extra,
            rt ? u32(rt[0]) : 0, t, u32(ctx.lr));
+}
+
+// The resource headers a draw reads, decoded as XDK 2135 lays them out
+// (rr6's gpu/d3d.h), to check that 2099's agree: Common (kind in bits
+// 16-18: 1 VB, 2 IB, 4 surface), then a VB's fetch words at +12/+16, or an
+// IB's base and size there (INDEX32 in Common bit 31).
+std::string DescribeBuffers(u32 dev) {
+  std::string out;
+  const auto *streams = pgr3::mem::at<const be_u32>(dev + 0x310C); // {offset, vb}[16]
+  for (int i = 0; streams && i < 4; ++i) {
+    const u32 vb = u32(streams[i * 2 + 1]);
+    if (!vb)
+      continue;
+    const auto *h = pgr3::mem::at<const be_u32>(vb);
+    if (h)
+      out += std::format(" s{}=0x{:08X}{{c={:08X} f0={:08X} f1={:08X} off={}}}", i, vb,
+                         u32(h[0]), u32(h[3]), u32(h[4]), u32(streams[i * 2]));
+  }
+  const auto *ib = pgr3::mem::at<const be_u32>(dev + 0x30F4);
+  if (ib && u32(*ib)) {
+    const auto *h = pgr3::mem::at<const be_u32>(u32(*ib));
+    if (h)
+      out += std::format(" ib=0x{:08X}{{c={:08X} base={:08X} size={}}}", u32(*ib), u32(h[0]),
+                         u32(h[3]), u32(h[4]));
+  }
+  return out;
+}
+
+// A render target or depth surface: Common, RB_SURFACE_INFO (+0x30: pitch
+// bits 0-13, MSAA bits 16-17) and RB_COLOR_INFO / RB_DEPTH_INFO (+0x34: EDRAM
+// base bits 0-11, format bits 16-19).
+std::string DescribeSurface(u32 surface) {
+  const auto *h = surface ? pgr3::mem::at<const be_u32>(surface) : nullptr;
+  if (!h)
+    return std::string();
+  const u32 info = u32(h[12]), edram = u32(h[13]);
+  return std::format(" {{c={:08X} pitch={} msaa={} base={} fmt={}}}", u32(h[0]), info & 0x3FFF,
+                     (info >> 16) & 3, edram & 0xFFF, (edram >> 16) & 0xF);
 }
 
 void ParseWanted() {
@@ -239,21 +280,31 @@ void DumpTexture(u32 frame, u32 seq, u32 va, const std::filesystem::path &dir) {
 
 REX_HOOK_RAW(D3DDevice_SetRenderTarget) {
   if (Tracing())
-    PGR3_INFO("[xtrace] SetRenderTarget {} 0x{:08X} lr=0x{:08X} frame={}",
-             ctx.r4.u32, ctx.r5.u32, u32(ctx.lr), g_frame + 1);
+    PGR3_INFO("[xtrace] SetRenderTarget {} 0x{:08X}{} lr=0x{:08X} frame={}",
+             ctx.r4.u32, ctx.r5.u32, DescribeSurface(ctx.r5.u32), u32(ctx.lr), g_frame + 1);
   __imp__D3DDevice_SetRenderTarget(ctx, base);
+}
+
+// (device, surface).
+REX_HOOK_RAW(D3DDevice_SetDepthStencilSurface) {
+  if (Tracing())
+    PGR3_INFO("[xtrace] SetDepthStencilSurface 0x{:08X}{} lr=0x{:08X} frame={}",
+             ctx.r4.u32, DescribeSurface(ctx.r4.u32), u32(ctx.lr), g_frame + 1);
+  __imp__D3DDevice_SetDepthStencilSurface(ctx, base);
 }
 
 REX_HOOK_RAW(D3DDevice_DrawVertices) {
   if (Tracing())
-    TraceCall("Draw", ctx, std::format(" prim={} n={}", ctx.r4.u32, ctx.r6.u32));
+    TraceCall("Draw", ctx, std::format(" prim={} n={}{}", ctx.r4.u32, ctx.r6.u32,
+                                       DescribeBuffers(ctx.r3.u32)));
   __imp__D3DDevice_DrawVertices(ctx, base);
 }
 
 REX_HOOK_RAW(D3DDevice_DrawIndexedVertices) {
   if (Tracing())
     TraceCall("DrawIndexed", ctx,
-              std::format(" prim={} n={}", ctx.r4.u32, ctx.r7.u32));
+              std::format(" prim={} n={}{}", ctx.r4.u32, ctx.r7.u32,
+                          DescribeBuffers(ctx.r3.u32)));
   __imp__D3DDevice_DrawIndexedVertices(ctx, base);
 }
 
@@ -268,6 +319,29 @@ REX_HOOK_RAW(D3DDevice_Clear) {
   if (Tracing())
     TraceCall("Clear", ctx, std::format(" flags=0x{:X}", ctx.r6.u32));
   __imp__D3DDevice_Clear(ctx, base);
+}
+
+// Predicated tiling, which RR6 never used. (device, flags, tile count, tile
+// D3DRECTs, clear colour, z in f1, stencil in r9).
+REX_HOOK_RAW(D3DDevice_BeginTiling) {
+  if (Tracing()) {
+    std::string rects;
+    const auto *r = pgr3::mem::at<const be_i32>(ctx.r6.u32);
+    for (u32 i = 0; r && i < std::min<u32>(ctx.r5.u32, 8); ++i)
+      rects += std::format(" ({},{})-({},{})", i32(r[i * 4]), i32(r[i * 4 + 1]),
+                           i32(r[i * 4 + 2]), i32(r[i * 4 + 3]));
+    TraceCall("BeginTiling", ctx,
+              std::format(" flags=0x{:X} tiles={}{}", ctx.r4.u32, ctx.r5.u32, rects));
+  }
+  __imp__D3DDevice_BeginTiling(ctx, base);
+}
+
+REX_HOOK_RAW(D3DDevice_EndTiling) {
+  if (Tracing())
+    TraceCall("EndTiling", ctx,
+              std::format(" r4=0x{:X} r5=0x{:X} r6=0x{:08X} r7=0x{:08X}", ctx.r4.u32,
+                          ctx.r5.u32, ctx.r6.u32, ctx.r7.u32));
+  __imp__D3DDevice_EndTiling(ctx, base);
 }
 
 REX_HOOK_RAW(D3DDevice_Resolve) {

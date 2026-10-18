@@ -15,7 +15,7 @@ than repeating it. SDK: rexglue 0.10.0.
 | 1. Shader extraction | **Done.** The `pgr3_shaders` build target extracts **309** shaders from the patched image (`pgr3_dump_image` + `scripts/extract_shaders.py`). The runtime census covers all 309, byte for byte, with nothing missing. See Phase 1 findings. |
 | 2. XenosRecomp | **Done.** All 309 shaders compile to DXIL and SPIR-V with `REBLUE_RECOMP PGR3_RECOMP`, on branch `pgr3` of the fork in `thirdparty/XenosRecomp` (uncommitted). RR6's 176 still compile, and their HLSL changes only as intended. See Phase 2 findings. |
 | 3. Build integration | **Done.** Both configurations build. Every build makes the shader cache; `PGR3_NATIVE_GPU=ON` builds `pgr3.exe` (D3D12) and `pgr3_vk.exe` (Vulkan) on plume with the cache and 548 prelinked variants. Until Phase 5 they log that the renderer is missing and exit. |
-| 4. D3D identification (XDK 2099) | **Started early** (Phase 0 needed it): `config/d3d.toml` names 70 functions matched against rr6's, `config/xapi.toml` the XInput pair. The device layout is checked only where the dump and trace tools read it. |
+| 4. D3D identification (XDK 2099) | **Done.** `config/d3d.toml` names 74 functions, including `BeginTiling`/`EndTiling` and `XPhysicalAlloc`/`Free`. `src/gpu/d3d.h` has the 2099 device and resource layouts, every field checked against PGR3's code. The render setup is confirmed: 1024x600, 2x MSAA, 7e3. See Phase 4 findings. |
 | 5. Native renderer bring-up | Not started. |
 | 6. Hardening and performance | Not started. |
 | 7. Geometry Wars (`gw.xex`) | Out of scope until 5 is done. |
@@ -75,13 +75,12 @@ over**; every one is re-derived (Phase 4).
 - `.bik` movies (43): Bink, decoded on the CPU into textures; expect linear,
   CPU-rewritten planes like RR6's movie path.
 - `.stream2`, `.pak`: streamed course data, so mirrors will churn during a race.
-- **Render setup:** PGR3 is widely reported to render at 1024x600 with 2x MSAA
-  (sized to fit EDRAM without predicated tiling) and to use HDR. The Phase 0
-  trace confirms 1024x600 and HDR (FP16 resolves, below); MSAA and the EDRAM
-  colour format still need the render-target registers traced. If MSAA is
-  used, restore re:Blue's MSAA resolves (rr6 removed them in `bb8e5ea`;
-  restore from `bb8e5ea^`). If the EDRAM format is `k_2_10_10_10_FLOAT` (7e3),
-  it has no host equivalent.
+- **Render setup (confirmed in Phase 4):** the race scene renders at 1024x600
+  with **2x MSAA** into **7e3** (`k_2_10_10_10_FLOAT`) EDRAM colour and
+  `D24FS8` depth, sized to fit EDRAM without tiling, and resolves to FP16
+  textures. Environment passes use **4x MSAA**. So the native renderer needs
+  re:Blue's MSAA resolves back (rr6 removed them in `bb8e5ea`; restore from
+  `bb8e5ea^`) and a host format for 7e3 (Phase 4 findings).
 - `gw.xex`: Geometry Wars, a **separate title executable** (LZX-compressed)
   with its own statically linked D3D9 2099 and its own shaders. It is not in
   `pgr3_manifest.toml`. See Phase 7.
@@ -445,6 +444,89 @@ Use rr6's method: find functions by behaviour in the codegen output
 **Exit:** a PGR3 equivalent of rr6's hook table (rr6 plan, Phase 3 findings),
 every address named, and `gpu/d3d.h` rewritten for 2099.
 
+**Done.**
+
+### Phase 4 findings
+
+**The hook table.** Everything rr6's renderer hooks or calls has a PGR3
+address:
+
+| rr6 | PGR3 |
+|---|---|
+| `Direct3D_CreateDevice` | `0x823D59F8` (allocates 0x5080, as in 2135) |
+| `D3DDevice_Present` | **none**: hook `D3DDevice_Swap` `0x823CADB8`; the game resolves the front buffer itself first |
+| `D3DDevice_Clear` (Stencil in r9) / `ClearF` | `0x823D5818` / `0x823D5158`, the same register use |
+| `D3DDevice_Resolve` | `0x823CEF68`, the same 416-byte frame and stack arguments (`508(r1)`, `516(r1)`) |
+| `Draw{Vertices,IndexedVertices,VerticesUP}`, `Begin/EndVertices` | `0x823D3D40`, `0x823D3F80`, `0x823D3CB8`, `0x823D3A18` / `0x823D3C98` |
+| `Create{Vertex,Pixel}Shader`, `CreateVertexDeclaration` | `0x823CA900`, `0x823CA810`, `0x823CA5E0` |
+| `Set{Vertex,Pixel}Shader`, `SetVertexDeclaration` | `0x823CA578`, `0x823CA208`, `0x823CA9D8` |
+| `Set{RenderTarget,DepthStencilSurface}` | `0x823CE288`, `0x823CE620` |
+| `D3DResource_Destroy`, `D3DSurface_GetDesc` | `0x823D4338`, `0x823D37A8` |
+| `D3D__MakeSpace`, `D3D__AllocCommandMemory` | `0x823D1198`, `0x823D04E8`; allocator callback at device `+0x3524` (2135: `+0x3534`) |
+| `XPhysicalAlloc` / `XPhysicalFree` | `0x823C5370` / `0x823C53F8` |
+| `XInputGetState` | `0x823C5600` |
+| `VdGlobalDevice` import | `0x820005A0` in the patched image (`0x8200059C` unpatched) |
+
+**How the layout was checked.** `scripts/re/state_setters.py` pairs the 97
+render-state and 20 sampler-state setters by state index, through the
+`{Get, Set, Default}` tables at `0x825271F0`/`0x82527680` (rr6:
+`0x823763E0`/`0x82376870`). The enums are the API's, so index *k* is the same
+state in both. Every pair matches at shape ratio 1.00 apart from D3DRS 78-81,
+and every device field they touch, `0x2C90`-`0x2F6C`, is at the same offset.
+That covers all the register shadows rr6 reads. `scratch/pair_diff.py` did the
+same for the named functions. `scripts/re/offset_map.py` (a free shape match
+over the whole library) was too noisy to rely on.
+
+**What differs from 2135:**
+- Up to the pixel shader (`+0x3290`), nothing.
+- `+0x32AC`-`+0x3544`: the tiling and command state. `BeginTiling` keeps its
+  tile count at `+0x32AC` and its rects from `+0x32B0`; 2135's `ClearF` and
+  `SetRenderTarget` compare more render-target fields there. The command
+  fields move by -0x10, and some by -4 or -0x14.
+- The vertex shader is at `+0x4FD8` and the behaviour flags at `+0x5050`
+  (2135: `+0x4FE8`, `+0x5060`).
+- D3DRS 78-81 and `SetRenderTarget` have 2099-only tails behind a global at
+  `0x829496EC`, which is zero in the image and written by nothing, so they
+  never run.
+
+**Resources.** The creators and accessors (`CreateTexture`, `CreateSurface`,
+`GetDesc`, `Destroy`, `AddRef`/`Release`, the locks) match 2135's at 1.00.
+`D3DDevice_CreateVertexBuffer`/`IndexBuffer` are not linked: PGR3 builds its
+own buffer headers, and `kCommonD3DCreated` is clear on every live one. A
+frame trace decodes the live headers with 2135's layout: VB `Common`
+`0x40090001` (kind 1, cached memory) with fetch type 3 at `+12`, IB
+`0x400A0001` (kind 2, 16-bit indices). PGR3 also overrides `XMemAlloc` and
+`XMemFree` (`sub_8219A778`/`sub_8219A170`).
+
+**Render targets in a race frame** (`pgr3_trace_frame`, now decoding
+`RB_SURFACE_INFO` and `RB_COLOR_INFO`):
+
+| Surface | EDRAM pitch | MSAA | Format | Use |
+|---|---|---|---|---|
+| `0x40008000` | 1040 | 2x | 3 `2_10_10_10_FLOAT` (7e3), sometimes 12 (`7e3_AS_16_16_16_16`) | race scene |
+| `0x40008050` | 1040 | 2x | `D24FS8` | race depth, at EDRAM tile 975 |
+| `0x400E4B60` | 280 | 4x | 12 | environment passes |
+| `0x4009F140` | 280 | 4x | 0 (8888) | probably the 256x256 minimap |
+| `0x4009F000`-`F0F0` | 80 | 1x | 7 `16_16_16_16_FLOAT` | luminance chain |
+| `0x400171A0` | 400 | 1x | 0 | bloom |
+| `0x400E7170` | 560 | 1x | `D24FS8` | shadow depth |
+
+- 1040 x 600 x 2 samples x 4 bytes is 975 EDRAM tiles of 5 KB, so colour plus
+  depth use 1950 of the 2048 tiles: no tiling needed, as reported. The 64bpp
+  FP16 data exists only in the resolve targets.
+- **`BeginTiling`/`EndTiling` are not called in races.** They are reached only
+  through `sub_821D78A8` and `sub_8229B078` (perhaps photo mode or captures);
+  their trace hooks log tile rects when they run.
+
+**What this adds to Phase 5:**
+- 2x and 4x MSAA targets with MSAA-to-1x resolves (re:Blue's resolve
+  shaders).
+- 7e3 EDRAM colour on the host: an `R16G16B16A16_FLOAT` (or
+  `R11G11B10`-class) host target, with resolves into FP16 textures converting
+  7e3 -> half and resolves into 8-bit or 7e3 textures converting on the way.
+- Float depth (`D24FS8`) resolves, which rr6 never had.
+- Predicated tiling, once the path that uses it is found.
+
 ### Phase 5: Native renderer bring-up
 
 1. Port the files listed under "What ports from rr6", with the rr6-specific
@@ -512,9 +594,11 @@ GPU at all.
 ## Risks and open questions
 
 1. **MSAA and 7e3 are new ground.** RR6 used neither, so this is where the port
-   stops being a port. Confirm both from the first trace before planning the
-   work in detail.
-2. **XDK 2099 vs 2135.** Container layout, device offsets and register-setter
+   stops being a port. Phase 4 confirmed both: 2x MSAA 7e3 for the race scene
+   and 4x MSAA for the environment passes, plus float depth resolves.
+2. **XDK 2099 vs 2135.** Settled by Phase 4 for everything the renderer
+   touches; the tiling state is the one region still only partly mapped.
+   Originally: container layout, device offsets and register-setter
    ABI quirks (like RR6's `Clear` taking Stencil in r9) all have to be checked.
    Phase 2 step 1 is the cheap early read on how far they differ.
 3. **Runtime shader creation from streamed content.** Largely settled by Phase
