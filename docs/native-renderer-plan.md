@@ -668,15 +668,42 @@ their depth plane.
 - **Supporting changes:** `R32_FLOAT` joined the render-target whitelist, and
   `pgr3_dump_frames` writes it as grey.
 
+**Missing scenery (under investigation).** Against the xenos reference of
+the same London stretch, the native race lacks:
+- trees, fences, the crowd, lane markings and cones;
+- textures on the buildings beside the road, which come out as flat
+  colour blocks.
+
+Findings so far:
+- **Nothing is dropped.** Every draw is recorded (`pgr3_devmode` draw
+  counters) and no pipeline fails.
+- **Tree impostors draw correctly.** They are quad-list sprites
+  (`vs_820BD620`, `ps_820BC970`) and come out at the right size and place:
+  `scratch/vsemu.py` evaluates the recompiled HLSL on traced inputs, and
+  `pgr3_debug_solid_vs` shows them as ~2x3-pixel trees at the horizon.
+  There are no near trees.
+- **The impostor atlas is baked at load.** `ps_820BC970` point-samples the
+  512x192 target `0x40396320`, thresholds the samples, and looks the result
+  up in a material crop sheet. The atlas is drawn once while loading
+  (`sub_82276310`): 198 draws of the pulled `vs_820C2DB8`, plus
+  `vs_820C1A50`. The building shader samples it too (`t2`).
+- **The atlas looks wrong, but its vertex shader evaluates sanely.** The atlas
+  dumps as structured noise, while `vsemu.py` puts its vertices into atlas
+  cells. Whether the noise is wrong or just encoded data needs a xenos dump of
+  `0x40396320` to compare.
+- **The xenos build can't currently provide that dump.** It no longer reaches
+  the race: the same binary did yesterday, but now presents at 30 frames a
+  second, and its resolve dumps are frozen noise. That needs looking at first.
+
 **Open, in rough order of what is visible in a race:**
-1. **MSAA.** The scene is 2x MSAA and the environment passes 4x; the host
+1. **Missing scenery,** above: get a xenos reference of the impostor atlas
+   and the Embankment, then compare.
+2. **MSAA.** The scene is 2x MSAA and the environment passes 4x; the host
    renders everything at 1x.
-2. **Remaining textures:** linear volume textures (64x64x32 `k_8_8_8_8`), and
-   the 512x192 one that decodes as noise.
-3. **The garage preview is overexposed,** and the race needs checking against
-   the xenos references once 1-2 are in; the bloom target stays black.
-4. Not yet compared frame by frame with the xenos references; the Vulkan exe
-   has had no validation-layer pass.
+3. **Remaining textures:** linear volume textures (64x64x32 `k_8_8_8_8`).
+4. **The garage preview is overexposed,** and the race needs checking against
+   the xenos references once 1-3 are in; the bloom target stays black.
+5. The Vulkan exe has had no validation-layer pass.
 
 ### Phase 6: Hardening and performance
 

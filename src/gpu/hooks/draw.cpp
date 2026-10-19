@@ -45,8 +45,9 @@ REXCVAR_DEFINE_INT32(pgr3_trace_frame, 0, kCvarGroup,
 REXCVAR_DEFINE_INT32(pgr3_trace_frame_count, 1, kCvarGroup,
                      "How many frames pgr3_trace_frame traces, from N on");
 REXCVAR_DEFINE_STRING(pgr3_trace_vs, "", kCvarGroup,
-                      "In the pgr3_trace_frame frame, also dump the VS constants "
-                      "and first stream records of draws with this VS hash (hex)");
+                      "In the pgr3_trace_frame frames, trace only the draws of the "
+                      "VS with this hash (hex), with its constants and first "
+                      "stream records");
 REXCVAR_DEFINE_STRING(pgr3_debug_skip_vs, "", kCvarGroup,
                       "Bring-up experiment: skip draws whose vertex shader hash "
                       "(hex, as pgr3_trace_frame prints it) is in this comma list");
@@ -360,6 +361,18 @@ bool SkippedVertexShader(const pgr3::gpu::GuestShader *vs) {
   return false;
 }
 
+// With pgr3_trace_vs set, the traced frames log only that shader's draws.
+bool TracedVertexShader() {
+  const std::string &wanted = REXCVAR_GET(pgr3_trace_vs);
+  if (wanted.empty())
+    return true;
+  auto &s = pgr3::gpu::state();
+  std::lock_guard lock(s.mutex);
+  const auto *vs = s.vertex_shader;
+  return vs && vs->shaderCacheEntry &&
+         std::format("{:016X}", vs->shaderCacheEntry->hash) == wanted;
+}
+
 // pgr3_trace_vs: every non-zero VS constant of the draw, and the first
 // records of streams 0 and 1 as raw dwords, to evaluate a shader by hand.
 void TraceVertexShaderInputs(const D3DDevice &dev, const DrawArgs &args) {
@@ -410,7 +423,7 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const DrawArgs &args) {
   if (!dev || !args.vertexOrIndexCount)
     return;
   g_stats.issued.fetch_add(1, std::memory_order_relaxed);
-  if (TracingThisFrame()) {
+  if (TracingThisFrame() && TracedVertexShader()) {
     TraceDraw(args.indexed ? "DrawIndexed" : "Draw", *dev, primitive_type,
               args.vertexOrIndexCount);
     // Full-screen passes: their PS constants (post grading lives there).
