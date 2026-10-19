@@ -33,6 +33,7 @@
 #include "gpu/shaders/shader_cache.h"
 #include "gpu/constant_buffers.h"
 #include "gpu/d3d.h"
+#include "gpu/format.h"
 #include "gpu/device.h"
 #include "gpu/guest_buffers.h"
 #include "gpu/native_texture_mirror.h"
@@ -237,14 +238,14 @@ void TraceDraw(const char *path, const D3DDevice &dev, u32 prim, u32 count) {
     tex += " chain:" + GuestCallChain(ctx.r1.u32, u32(ctx.lr), 6);
   }
   PGR3_INFO("[trace] {} prim={} n={} rt={}x{} vs={:016X} ps={:016X} "
-           "blend={}:{:08X} depth={:08X} cull={:X} color={:X} aref={:.3f} "
+           "blend={}:{:08X} depth={:08X} cull={:X} color={:X} cmask={:X} aref={:.3f} "
            "poly={:X}:{:.3f},{:.6f} vtx={:X} vte={:X} sc={:08X}:{:08X} ucp={:X}:{:.3f},{:.3f},{:.3f},{:.3f} vp={},{} {}x{} vso={:.1f},{:.1f},{:.1f},{:.1f},{:.3f},{:.3f}{}",
            path, prim, count, s.render_target ? s.render_target->width : 0,
            s.render_target ? s.render_target->height : 0,
            hash(s.vertex_shader), hash(s.pixel_shader),
            (u32(dev.blendFlags) >> 31), u32(dev.rbBlendControl0),
            u32(dev.rbDepthControl), u32(dev.paSuScModeCntl) & 7u,
-           u32(dev.rbColorControl), float(dev.rbAlphaRef),
+           u32(dev.rbColorControl), u32(dev.rbColorMask), float(dev.rbAlphaRef),
            (u32(dev.paSuScModeCntl) >> 11) & 7u, float(dev.polyOffsetFrontScale),
            float(dev.polyOffsetFrontOffset), u32(dev.paSuVtxCntl), u32(dev.paClVteCntl),
            u32(dev.paScWindowScissorTL), u32(dev.paScWindowScissorBR),
@@ -950,6 +951,10 @@ void ResolveNative(const ResolveArgs &a) {
     if (const auto *w = pgr3::mem::at<const be_u32>(surface_va); w && surface_va)
       for (int i = 12; i < 15; ++i)
         words += std::format(" {:08X}", u32(w[i]));
+    if (const auto *c = pgr3::mem::at<const be_f32>(a.clear_color_va);
+        c && a.clear_color_va && (flags & kResolveClearRenderTarget))
+      words += std::format(" clear=({:.3g},{:.3g},{:.3g},{:.3g})", float(c[0]),
+                           float(c[1]), float(c[2]), float(c[3]));
     PGR3_INFO("[trace] Resolve flags=0x{:X} dest=0x{:08X} src={}x{} rect={} "
              "point={} surface=0x{:08X}:{} lr=0x{:08X}",
              flags, dest, src ? src->width : 0, src ? src->height : 0, rect,
@@ -1010,6 +1015,19 @@ void ResolveNative(const ResolveArgs &a) {
     clear_flags |= pgr3::gpu::kClearTarget;
     if (const auto *c = pgr3::mem::at<const be_f32>(clear_color_va))
       color = FloatColorToArgb(c);
+    // A 7e3 surface's alpha comes back as 1. D3D packs the clear's alpha as
+    // given (PGR3's frame-end resolve clears to 0,0,0,0), but on Xenos the
+    // scene's EDRAM is then shared: the shadow and environment passes put
+    // their depth and colour at bases 0 and 224, inside the scene colour's
+    // tiles, and D24FS8 depth near 1.0 has the top two bits that 7e3 reads as
+    // alpha. xenia's EDRAM-exact path (render_target_path_d3d12=rov) resolves
+    // the scene with alpha 1 at every pixel. The host does not alias EDRAM,
+    // so it clears alpha to that. The scene's opaque geometry masks alpha
+    // off and keeps it, and the motion blur (ps_8200F068) blurs only where
+    // alpha is 1.
+    if (src && src->guestFormat ==
+                   static_cast<u32>(pgr3::gpu::D3DFormat::kA2B10G10R10FEdram))
+      color |= 0xFF000000u;
   }
   if (flags & kResolveClearDepthStencil)
     clear_flags |= pgr3::gpu::kClearZBuffer | pgr3::gpu::kClearStencil;

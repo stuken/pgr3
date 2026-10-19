@@ -727,7 +727,35 @@ Settled along the way:
   `pgr3_debug_solid_cycle` frames), `pgr3_debug_occlusion_samples`,
   `pgr3_debug_fill_depth_resolve`, `scratch/sprites.py`.
 
-**Open, in rough order of what is visible in a race:**
+**Side-by-side against xenos (London, first lap).** Game time is not tied to
+presents, so frames are matched by scene: native present 5800 is xenos 5600
+(the Embankment at about 90 mph), native 6280 is xenos 6000 (the chevron
+board). `scratch/cmp_sheet.py` builds such sheets, `scratch/tracesum.py`
+summarises a frame trace, and `scratch/bmpalpha.py` reads the alpha byte that
+both dumpers write (Pillow drops it from a 32-bit BMP). The two builds' pass
+lists and resolves agree one for one. Fixed:
+- **The minimap** (stack-built `vs_821DA5E0`/`ps_821DAA64`, 256x256) takes a
+  colour index and an edge coordinate from SHORT2 `BLENDINDICES`, which had no
+  16-bit swap: the road drew black and the player marker lost its colour.
+  XenosRecomp's `swapUints` swaps them under bits 16+ of
+  `g_SwappedBlendWeights`.
+- **Motion blur.** `ps_8200F068`, the full-screen rect pass after the scene and
+  depth resolves, reprojects each pixel through `g_blurMatrix` and blurs only
+  where the scene's alpha is 1. The opaque scenery masks alpha off
+  (`RB_COLOR_MASK` 7), so it keeps the alpha the target starts with. The
+  frame-end resolve clears the 7e3 target to (0,0,0,0) (D3D packs alpha 0;
+  the xenos trace logs the packed value), but xenos resolves the scene with
+  alpha 1 at every pixel, in its EDRAM-exact ROV path too. The shadow and
+  environment passes put depth and colour in the scene's EDRAM tiles
+  (bases 0 and 224) in between, and depth near 1.0 has the top bits 7e3 reads
+  as alpha. The host does not alias EDRAM, so the resolve-clear of a 7e3
+  surface clears alpha to 1. The roadside, crowd and buildings now blur as on
+  xenos, and the title screen's logo, which blends against destination alpha,
+  appears.
+
+Still different: the title screen's logo rings are dimmer than on xenos.
+
+
 1. **MSAA.** The scene is 2x MSAA and the environment passes 4x; the host
    renders everything at 1x. Alpha to coverage then has one sample, so the
    foliage edges are hard.

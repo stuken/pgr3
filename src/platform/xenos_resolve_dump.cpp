@@ -371,7 +371,13 @@ REX_HOOK_RAW(D3DDevice_Resolve) {
     seq = g_resolves++;
     wanted = dest && std::find(g_wanted.begin(), g_wanted.end(), frame) != g_wanted.end();
   }
+  const u32 flags = ctx.r4.u32;
   __imp__D3DDevice_Resolve(ctx, base);
+  // D3DRESOLVE_CLEARRENDERTARGET: the packed clear D3D computed for the
+  // surface's format (RB_COLOR_CLEAR / _LO, device +0x2E70 / +0x2E74).
+  if (Tracing() && (flags & 0x100))
+    if (const auto *c = pgr3::mem::at<const be_u32>(device + 0x2E70))
+      PGR3_INFO("[xtrace]   resolve clear packed {:08X} {:08X}", u32(c[0]), u32(c[1]));
   if (!wanted)
     return;
   // Resolve returns nothing, so the volatile registers are free to reuse.
