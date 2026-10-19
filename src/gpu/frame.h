@@ -30,7 +30,8 @@ void ResolveEffectiveTargets(VideoState &s, GuestTexture *&rt,
                              GuestTexture *&ds);
 
 plume::RenderFramebuffer *GetFramebuffer(VideoState &s, GuestTexture *rt,
-                                         GuestTexture *ds);
+                                         GuestTexture *ds,
+                                         GuestTexture *rt1 = nullptr);
 
 enum class CopyFilter {
   // Same size: a straight copy. Smaller: a box filter at an integer ratio,

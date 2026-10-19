@@ -936,8 +936,13 @@ void ResolveNative(const ResolveArgs &a) {
   const u32 clear_stencil = a.clear_stencil;
 
   const bool depth = (flags & pgr3::gpu::kResolveDepthStencil) != 0;
+  // D3DRESOLVE_RENDERTARGET0-3 in bits 0-1; slot 1 is modelled.
   pgr3::gpu::GuestTexture *src = depth ? pgr3::gpu::state().depth_stencil
-                                       : pgr3::gpu::state().render_target;
+                                 : (flags & 3) == 1
+                                     ? pgr3::gpu::state().render_target1
+                                     : pgr3::gpu::state().render_target;
+  if (!depth && (flags & 3) > 1)
+    PGR3_WARN_FIRST(4, "Resolve: render target {} is not modelled", flags & 3);
   if (TracingThisFrame()) {
     // D3DRECT {x1,y1,x2,y2}, D3DPOINT {x,y}; the surface words carry the
     // EDRAM base and pitch the guest resolves from.
@@ -989,7 +994,8 @@ void ResolveNative(const ResolveArgs &a) {
   }
   if (dest && src && src->texture) {
     const plume::RenderFormat format =
-        depth ? plume::RenderFormat::R32_FLOAT : src->format;
+        depth ? plume::RenderFormat::R32_FLOAT
+              : pgr3::gpu::ResolveTargetHostFormat(dest, src->format);
     if (auto *dst = pgr3::gpu::GetOrCreateResolveTarget(dest, format)) {
       Video::TrackResolveSource(flags, dst, level, face);
       // D3DRECT {x1,y1,x2,y2} in surface pixels and D3DPOINT {x,y}.

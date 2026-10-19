@@ -27,7 +27,7 @@ namespace pgr3::gpu {
 // Size tripwire next to the raw-byte hash: forces a deliberate review on any
 // PipelineState field add/remove/reorder. Replace the literal if the struct
 // legitimately changes (and update the CSV schema + regenerate the PSO cache).
-static_assert(sizeof(PipelineState) == 156,
+static_assert(sizeof(PipelineState) == 164,
               "PipelineState size changed: update kCSVHeader/CsvRow + "
               "tools/shader_cache/pso_cache_to_header.py and regenerate "
               "cache/pipeline_state_cache.h.");
@@ -43,6 +43,14 @@ void SanitizePipelineState(PipelineState &state) {
     state.alphaBlendEnable = false;
     state.colorWriteEnable = 0;
   }
+  // RT1 only beside an RT0 and without depth, as BindDrawFramebuffer binds it.
+  if (state.renderTargetFormat == plume::RenderFormat::UNKNOWN ||
+      state.depthStencilFormat != plume::RenderFormat::UNKNOWN)
+    state.renderTargetFormat1 = plume::RenderFormat::UNKNOWN;
+  if (state.renderTargetFormat1 == plume::RenderFormat::UNKNOWN)
+    state.colorWriteEnable1 = 0;
+  if (state.renderTargetFormat1 == plume::RenderFormat::R16G16B16A16_FLOAT)
+    state.renderTargetFormat1 = Video::SceneColorFormat();
 
   if (!state.alphaBlendEnable) {
     state.srcBlend = plume::RenderBlend::ONE;
@@ -219,6 +227,12 @@ std::unique_ptr<plume::RenderPipeline> Build(const PipelineState &state) {
     writeMask &= ~0x8;
   }
   desc.renderTargetBlend[0].renderTargetWriteMask = writeMask;
+  if (state.renderTargetFormat1 != plume::RenderFormat::UNKNOWN) {
+    desc.renderTargetFormat[1] = state.renderTargetFormat1;
+    desc.renderTargetCount = 2;
+    desc.renderTargetBlend[1] = desc.renderTargetBlend[0];
+    desc.renderTargetBlend[1].renderTargetWriteMask = u8(state.colorWriteEnable1);
+  }
 
   desc.depthTargetFormat = state.depthStencilFormat;
   desc.multisampling.sampleCount = state.sampleCount;

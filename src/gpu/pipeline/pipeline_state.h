@@ -73,6 +73,11 @@ struct PipelineState {
   // pgr3_debug_solid_vs: the pipeline cache swaps the guest PS for
   // debug_solid_ps. (Was the dead enhancedDOF field, which kept the size.)
   bool debugSolid = false;
+  // MRT: the second colour target (UNKNOWN when none) and its write mask,
+  // RB_COLOR_MASK bits 4-7. It shares RT0's blend. PGR3's night bloom pass
+  // writes its compressed glow there.
+  plume::RenderFormat renderTargetFormat1{};
+  u32 colorWriteEnable1 = 0;
 };
 #pragma pack(pop)
 

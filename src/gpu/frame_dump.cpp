@@ -128,6 +128,9 @@ bool DumpTexture(VideoState &s, GuestTexture *rt,
   if (!src)
     return false;
   std::vector<u8> bgra(size_t(width) * height * 4);
+  // FP16: the largest RGB value, and how many exceed 7e3's 31.875.
+  float peak = 0.0f;
+  u64 over = 0;
   for (u32 y = 0; y < height; ++y) {
     const u8 *row = src + size_t(y) * row_pixels * bpp;
     u8 *out = bgra.data() + size_t(y) * width * 4;
@@ -146,6 +149,11 @@ bool DumpTexture(VideoState &s, GuestTexture *rt,
         out[1] = ToByte(HalfToFloat(h[1]));
         out[2] = ToByte(HalfToFloat(h[0]));
         out[3] = ToByte(HalfToFloat(h[3]));
+        for (int c = 0; c < 3; ++c) {
+          const float f = HalfToFloat(h[c]);
+          peak = std::max(peak, f);
+          over += f > 31.875f;
+        }
       } else if (rt->format == plume::RenderFormat::R32_FLOAT) {
         float v;
         std::memcpy(&v, row + x * 4, 4);
@@ -165,6 +173,9 @@ bool DumpTexture(VideoState &s, GuestTexture *rt,
     }
   }
   readback->unmap();
+  if (bpp == 8 && rt->format == plume::RenderFormat::R16G16B16A16_FLOAT)
+    PGR3_INFO("pgr3_dump_frames: {} peak={:.3f} over_7e3={}", path.string(),
+              peak, over);
   return WriteBmp(path, width, height, bgra);
 }
 

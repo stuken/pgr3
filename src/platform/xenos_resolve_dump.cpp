@@ -321,9 +321,18 @@ REX_HOOK_RAW(D3DDevice_DrawIndexedVertices) {
 }
 
 REX_HOOK_RAW(D3DDevice_BeginVertices) {
-  if (Tracing())
+  if (Tracing()) {
     TraceCall("BeginVertices", ctx,
               std::format(" prim={} n={}", ctx.r4.u32, ctx.r5.u32));
+    // The post passes' PS constants (g_vPostProcessSettings1-3 at c64-c66,
+    // the tap table from c67), from the device's shadow at +0x1780.
+    std::string consts;
+    if (const auto *c = pgr3::mem::at<const be_f32>(ctx.r3.u32 + 0x1780 + 64 * 16))
+      for (u32 r = 0; r < 8; ++r)
+        consts += std::format(" c{}=({:.4g},{:.4g},{:.4g},{:.4g})", 64 + r, float(c[r * 4]),
+                              float(c[r * 4 + 1]), float(c[r * 4 + 2]), float(c[r * 4 + 3]));
+    PGR3_INFO("[xtrace]   ps{}", consts);
+  }
   __imp__D3DDevice_BeginVertices(ctx, base);
 }
 

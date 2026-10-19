@@ -22,8 +22,10 @@
 namespace pgr3::gpu {
 
 plume::RenderFramebuffer *GetFramebuffer(VideoState &s, GuestTexture *rt,
-                                         GuestTexture *ds) {
-  GuestTexture *container = ds ? ds : rt;
+                                         GuestTexture *ds, GuestTexture *rt1) {
+  // An MRT framebuffer (rt + rt1, no depth) belongs to rt1, keyed by rt's
+  // texture, so either surface's teardown drops it.
+  GuestTexture *container = rt1 ? rt1 : ds ? ds : rt;
   if (!container)
     return nullptr;
   const plume::RenderTexture *key = rt ? rt->texture : nullptr;
@@ -34,11 +36,15 @@ plume::RenderFramebuffer *GetFramebuffer(VideoState &s, GuestTexture *rt,
   }
 
   plume::RenderFramebufferDesc desc;
-  const plume::RenderTexture *color_attachments[1];
+  const plume::RenderTexture *color_attachments[2];
   if (rt) {
     color_attachments[0] = rt->texture;
     desc.colorAttachments = color_attachments;
     desc.colorAttachmentsCount = 1;
+    if (rt1) {
+      color_attachments[1] = rt1->texture;
+      desc.colorAttachmentsCount = 2;
+    }
   }
   if (ds)
     desc.depthAttachment = ds->texture;
@@ -51,6 +57,8 @@ plume::RenderFramebuffer *GetFramebuffer(VideoState &s, GuestTexture *rt,
   auto *raw = fb.get();
   if (rt)
     rt->framebufferAttached = true;
+  if (rt1)
+    rt1->framebufferAttached = true;
   if (ds)
     ds->framebufferAttached = true;
   container->framebuffers.emplace(key, std::move(fb));
@@ -190,7 +198,14 @@ bool Video::BindDrawFramebufferLocked(bool color_clear_follows) {
   BuildFxaaCopyLocked(s);
   TransitionResolveSources(s, rt, ds);
 
-  if (s.draw_framebuffer_bound && rt == s.bound_fb_rt && ds == s.bound_fb_ds) {
+  // MRT slot 1, when it can pair with rt (see VideoState::render_target1).
+  GuestTexture *rt1 = s.render_target1;
+  if (rt1 && (!rt1->texture || !rt || ds || rt1 == rt ||
+              rt1->sampleCount != rt->sampleCount))
+    rt1 = nullptr;
+
+  if (s.draw_framebuffer_bound && rt == s.bound_fb_rt && ds == s.bound_fb_ds &&
+      rt1 == s.bound_fb_rt1) {
     return true;
   }
   PGR3_GPU_ZONE("BindDrawFramebuffer");
@@ -209,6 +224,15 @@ bool Video::BindDrawFramebufferLocked(bool color_clear_follows) {
   bool discard_rt = false;
   bool discard_ds = false;
   TransitionTargetsToWrite(s, rt, ds, discard_rt, discard_ds);
+  if (rt1 && rt1->layout != plume::RenderTextureLayout::COLOR_WRITE) {
+    const bool discard_rt1 = rt1->layout == plume::RenderTextureLayout::UNKNOWN;
+    plume::RenderTextureBarrier b(rt1->texture,
+                                  plume::RenderTextureLayout::COLOR_WRITE);
+    s.command_list->barriers(plume::RenderBarrierStage::GRAPHICS, &b, 1);
+    rt1->layout = plume::RenderTextureLayout::COLOR_WRITE;
+    if (discard_rt1)
+      s.command_list->discardTexture(rt1->texture);
+  }
 
   const bool full_screen = FullscreenChainClassLocked(s, rt);
   const bool msaa_rt =
@@ -223,7 +247,7 @@ bool Video::BindDrawFramebufferLocked(bool color_clear_follows) {
   if (discard_ds)
     s.command_list->discardTexture(ds->texture);
 
-  plume::RenderFramebuffer *fb = GetFramebuffer(s, rt, ds);
+  plume::RenderFramebuffer *fb = GetFramebuffer(s, rt, ds, rt1);
   if (!fb)
     return false;
   s.command_list->setFramebuffer(fb);
@@ -235,6 +259,7 @@ bool Video::BindDrawFramebufferLocked(bool color_clear_follows) {
   }
   s.draw_framebuffer_bound = true;
   s.bound_fb_rt = rt;
+  s.bound_fb_rt1 = rt1;
   s.bound_fb_ds = ds;
   if (rt)
     s.last_drawn_rt = rt;

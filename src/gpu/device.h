@@ -428,6 +428,7 @@ struct VideoState {
 
   bool draw_framebuffer_bound = false;
   GuestTexture *bound_fb_rt = nullptr;
+  GuestTexture *bound_fb_rt1 = nullptr;
   GuestTexture *bound_fb_ds = nullptr;
 
   bool frame_present_committed = false;
@@ -439,6 +440,9 @@ struct VideoState {
   // Shadows the engine's guest device intent so draws have a coherent pipeline
   // state to lower.
   GuestTexture *render_target = nullptr;
+  // MRT slot 1 (SetRenderTarget index 1), bound only beside an RT0 and with
+  // no depth surface; the pipeline's renderTargetFormat1 follows it.
+  GuestTexture *render_target1 = nullptr;
   GuestTexture *depth_stencil = nullptr;
 
   // Allocated in Direct3D_CreateDevice and held for device lifetime: the host

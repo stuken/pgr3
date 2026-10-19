@@ -37,6 +37,12 @@ void ForEachResolveTarget(
 // RR6: the resolve target already backing a guest texture, or nullptr.
 GuestTexture *FindResolveTarget(u32 guest_va);
 
+// The host format a resolve into guest texture 'guest_va' writes: its own
+// format where the host models it (k_8_8_8_8, which clamps what a 7e3 or FP16
+// surface resolves into it), else the source surface's 'src_format'.
+plume::RenderFormat ResolveTargetHostFormat(u32 guest_va,
+                                            plume::RenderFormat src_format);
+
 // RR6: the host texture D3DDevice_Resolve writes for a guest texture, created
 // (or recreated) at the fetch constant's size in 'format'.
 GuestTexture *GetOrCreateResolveTarget(u32 guest_va,

@@ -774,6 +774,26 @@ passes and the minimap 4x, the post chain 1x. Resolves:
 Alpha to coverage now has the samples to work with on the foliage. Checked on
 D3D12 and Vulkan through the menus, garage and race.
 
+**Night races blew out their highlights (fixed).** Las Vegas at night
+(`highlight_blowout.rdc`; reached from boot with
+`a@2s,a@4s,a@6s,start@11s,a@16s,down@21s,a@23s,a@25s,a@27s,up@29s,a@31s,a@33s,a@35s,start@37s`
+plus `rt@45s+200`, since the car fades out without throttle). The scene,
+the luminance chain (at the game's 0.1 floor) and the scene alpha (1
+everywhere) all matched xenos; the bloom did not:
+- **MRT.** At night the bright pass (`ps_8200D0E0`) writes two targets: the
+  raw bright pass to RT0 and its compressed glow, `x/(x+k)`, to RT1, which the
+  game resolves with `D3DRESOLVE_RENDERTARGET1` (flags `0x1`). The host
+  modelled RT0 only, so the bloom took the raw bright pass, the whole car
+  body included. `SetRenderTarget` slot 1 is now a second colour attachment
+  (no depth beside it), with its own write mask (`RB_COLOR_MASK` bits 4-7)
+  and RT0's blend, and resolves pick the target by flags bits 0-1.
+- **Resolve destination formats.** A resolve target took its source surface's
+  format, so the 7e3 scene resolved into PGR3's `k_8_8_8_8` bloom and front
+  buffer textures as FP16, keeping values over 1 that Xenos clamps. Such a
+  destination is now `R8G8B8A8_UNORM`, and a partial resolve that converts
+  formats runs the copy shader with the source's extent placed under a
+  scissor, instead of failing over to a whole-surface copy.
+
 **Open, in rough order of what is visible in a race:**
 1. **The other cities and night races,** replays and movies, against xenos.
    These need menu scripts.

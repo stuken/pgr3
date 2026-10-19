@@ -122,6 +122,8 @@ void ReadDeviceRenderState(VideoState &s, u32 device_guest) {
   Video::SetDirtyValue(dirty, ps.fillMode, ConvertFillMode((mode >> 3) & 0xFFu));
   Video::SetDirtyValue(dirty, ps.colorWriteEnable,
                        u32(dev->rbColorMask) & 0xFu);
+  Video::SetDirtyValue(dirty, ps.colorWriteEnable1,
+                       (u32(dev->rbColorMask) >> 4) & 0xFu);
 
   Video::SetDirtyValue(dirty, ps.stencilEnable, (depth & 0x1u) != 0);
   Video::SetDirtyValue(dirty, ps.stencilTwoSided, (depth & 0x80u) != 0);

@@ -203,7 +203,7 @@ std::string FloatLiteral(float v) {
 // One designated initializer naming every field that differs from a default
 // PipelineState, in declaration order.
 std::string EmitEntry(const PipelineState &s) {
-  static_assert(sizeof(PipelineState) == 156,
+  static_assert(sizeof(PipelineState) == 164,
                 "PipelineState changed: update EmitEntry and recapture");
   const PipelineState d{};
   std::string out = "    {";
@@ -291,6 +291,10 @@ std::string EmitEntry(const PipelineState &s) {
   BoolField(out, "occlusionCounting", s.occlusionCounting,
             d.occlusionCounting);
   BoolField(out, "debugSolid", s.debugSolid, d.debugSolid);
+  EnumField(out, "renderTargetFormat1", "plume::RenderFormat",
+            s.renderTargetFormat1, d.renderTargetFormat1);
+  Field(out, "colorWriteEnable1", s.colorWriteEnable1, d.colorWriteEnable1,
+        std::format("0x{:X}", s.colorWriteEnable1));
   if (out.back() == ',')
     out.pop_back();
   out += "},\n";

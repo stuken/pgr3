@@ -52,6 +52,9 @@ inline const plume::RenderTexture *const kDepthFbKey =
 GuestTexture *ResolveSourceForFlagsLocked(VideoState &s, u32 flags) {
   if (flags & kResolveDepthStencil)
     return s.depth_stencil;
+  // D3DRESOLVE_RENDERTARGET1.
+  if ((flags & 3) == 1)
+    return s.render_target1;
   if (s.render_target)
     return s.render_target;
   return s.back_buffer_surface;
@@ -488,6 +491,91 @@ void NoteTileContentLocked(VideoState &s, GuestTexture *dst) {
 
 namespace {
 
+// A partial resolve that converts formats (PGR3's 7e3 scene into its
+// k_8_8_8_8 bloom textures): the colour copy shader, drawn over the source's
+// full extent placed so its rect lands at the destination point, and
+// scissored to that rect, so texels map 1:1 and the rest of the destination
+// is kept.
+bool ShaderCopyRegionLocked(VideoState &s, GuestTexture *src, GuestTexture *dst,
+                            const plume::RenderRect *src_rect, u32 dst_x,
+                            u32 dst_y) {
+  if (src->hostScale != dst->hostScale || dst->resolveScale != 1.0f ||
+      src->sampleCount != plume::RenderSampleCount::COUNT_1 ||
+      dst->sampleCount != plume::RenderSampleCount::COUNT_1 ||
+      dst->viewDimension == plume::RenderTextureViewDimension::TEXTURE_CUBE ||
+      !IsRenderTargetCapable(dst->format))
+    return false;
+  i32 left = src_rect ? std::max(src_rect->left, 0) : 0;
+  i32 top = src_rect ? std::max(src_rect->top, 0) : 0;
+  i32 right = std::min(src_rect ? src_rect->right : i32(src->width), i32(src->width));
+  i32 bottom = std::min(src_rect ? src_rect->bottom : i32(src->height), i32(src->height));
+  right = std::min(right, left + i32(dst->width) - i32(dst_x));
+  bottom = std::min(bottom, top + i32(dst->height) - i32(dst_y));
+  if (right <= left || bottom <= top || dst_x >= dst->width || dst_y >= dst->height)
+    return true;
+  BeginCommandList(s);
+  if (!s.command_list_open)
+    return false;
+  if (src->descriptorIndex == kInvalidDescriptorIndex)
+    BindTextureSRVLocked(s, src);
+  if (src->descriptorIndex == kInvalidDescriptorIndex)
+    return false;
+  auto it = dst->framebuffers.find(nullptr);
+  plume::RenderFramebuffer *dst_fb = nullptr;
+  if (it != dst->framebuffers.end()) {
+    dst_fb = it->second.get();
+  } else {
+    const plume::RenderTexture *attachments[1] = {dst->texture};
+    plume::RenderFramebufferDesc desc(attachments, 1);
+    auto fb = s.device->createFramebuffer(desc);
+    if (!fb)
+      return false;
+    dst_fb = fb.get();
+    dst->framebufferAttached = true;
+    dst->framebuffers.emplace(nullptr, std::move(fb));
+    s.framebuffer_owners.insert(dst);
+  }
+  plume::RenderPipeline *pipeline = GetOrCreateResolvePipeline(s, dst->format);
+  if (!pipeline)
+    return false;
+  s.draw_framebuffer_bound = false;
+  plume::RenderTextureBarrier pre[2] = {
+      plume::RenderTextureBarrier(src->texture,
+                                  plume::RenderTextureLayout::SHADER_READ),
+      plume::RenderTextureBarrier(dst->texture,
+                                  plume::RenderTextureLayout::COLOR_WRITE),
+  };
+  s.command_list->barriers(plume::RenderBarrierStage::GRAPHICS, pre, std::size(pre));
+  src->layout = plume::RenderTextureLayout::SHADER_READ;
+  dst->layout = plume::RenderTextureLayout::COLOR_WRITE;
+  s.command_list->setFramebuffer(dst_fb);
+  s.command_list->setViewports(plume::RenderViewport(
+      float(i32(dst_x) - left), float(i32(dst_y) - top), float(src->width),
+      float(src->height)));
+  s.command_list->setScissors(plume::RenderRect(
+      i32(dst_x), i32(dst_y), i32(dst_x) + (right - left),
+      i32(dst_y) + (bottom - top)));
+  s.command_list->setPipeline(pipeline);
+  struct CopyPushConstants {
+    u32 resourceDescriptorIndex;
+    u32 resourceDescriptorIndex2;
+    float param0;
+    float param1;
+  } push{src->descriptorIndex, 0u, 1.0f, 0.0f};
+  s.command_list->setGraphicsPushConstants(kCopyPushConstantRangeIndex, &push,
+                                           kCopyPushConstantByteOffset,
+                                           sizeof(push));
+  s.command_list->drawInstanced(3, 1, 0, 0);
+  s.command_list->setFramebuffer(nullptr);
+  s.current_pso = nullptr;
+  s.dirtyStates.pipelineState = true;
+  plume::RenderTextureBarrier post(dst->texture,
+                                   plume::RenderTextureLayout::SHADER_READ);
+  s.command_list->barriers(plume::RenderBarrierStage::GRAPHICS, &post, 1);
+  dst->layout = plume::RenderTextureLayout::SHADER_READ;
+  return true;
+}
+
 // A resolve of part of the surface: a straight region copy, which needs the
 // same format and size class on both sides (no scaling or MSAA).
 bool CopySurfaceRegionLocked(VideoState &s, GuestTexture *src, GuestTexture *dst,
@@ -495,7 +583,7 @@ bool CopySurfaceRegionLocked(VideoState &s, GuestTexture *src, GuestTexture *dst
                              u32 dst_y) {
   // A multisampled colour source resolves to one sample first.
   if (src->sampleCount != plume::RenderSampleCount::COUNT_1 &&
-      !IsDepthFormat(src->format) && src->format == dst->format &&
+      !IsDepthFormat(src->format) &&
       dst->sampleCount == plume::RenderSampleCount::COUNT_1) {
     BeginCommandList(s);
     if (!s.command_list_open)
@@ -504,6 +592,8 @@ bool CopySurfaceRegionLocked(VideoState &s, GuestTexture *src, GuestTexture *dst
     if (!src)
       return false;
   }
+  if (src->format != dst->format && !IsDepthFormat(src->format))
+    return ShaderCopyRegionLocked(s, src, dst, src_rect, dst_x, dst_y);
   if (src->format != dst->format || dst->resolveScale != 1.0f ||
       src->hostScale != dst->hostScale ||
       src->sampleCount != plume::RenderSampleCount::COUNT_1 ||

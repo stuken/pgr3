@@ -195,7 +195,22 @@ REX_HOOK_RAW(D3DDevice_SetRenderTarget) {
   const u32 index = ctx.r4.u32;
   const u32 surface_va = ctx.r5.u32;
   __imp__D3DDevice_SetRenderTarget(ctx, base);
-  // MRT is not modeled, as in reblue.
+  // MRT: slot 1 is modelled (PGR3's night bloom writes its compressed glow
+  // there), slots 2-3 are not.
+  if (index == 1) {
+    GuestTexture *surface = HostSurface(ctx, base, surface_va);
+    if (surface && pgr3::gpu::IsDepthFormat(surface->format))
+      surface = nullptr;
+    auto &s = pgr3::gpu::state();
+    if (s.render_target1 != surface)
+      s.draw_framebuffer_bound = false;
+    pgr3::gpu::Video::SetDirtyValue<GuestTexture *>(
+        s.dirtyStates.renderTargetAndDepthStencil, s.render_target1, surface);
+    pgr3::gpu::Video::SetDirtyValue<plume::RenderFormat>(
+        s.dirtyStates.pipelineState, s.pipelineState.renderTargetFormat1,
+        surface ? surface->format : plume::RenderFormat::UNKNOWN);
+    return;
+  }
   if (index != 0) {
     if (surface_va)
       PGR3_WARN_FIRST(4, "SetRenderTarget: MRT slot {} (0x{:08X}) not modeled",

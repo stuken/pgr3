@@ -621,6 +621,20 @@ void ForEachResolveTarget(
     fn(va, tex.get());
 }
 
+plume::RenderFormat ResolveTargetHostFormat(u32 guest_va,
+                                            plume::RenderFormat src_format) {
+  xe::xe_gpu_texture_fetch_t fetch;
+  if (!guest_va || !ReadFetch(guest_va, fetch) ||
+      fetch.type != xe::FetchConstantType::kTexture)
+    return src_format;
+  // PGR3 resolves its 7e3 scene into k_8_8_8_8 bloom and front-buffer
+  // textures, and the conversion clamps to 0..1 on the way. Kept as FP16, the
+  // bloom chain's over-range values fed back into the blur and the composite.
+  if (fetch.format == xe::TextureFormat::k_8_8_8_8)
+    return plume::RenderFormat::R8G8B8A8_UNORM;
+  return src_format;
+}
+
 GuestTexture *GetOrCreateResolveTarget(u32 guest_va,
                                        plume::RenderFormat format) {
   if (!guest_va || format == plume::RenderFormat::UNKNOWN)
