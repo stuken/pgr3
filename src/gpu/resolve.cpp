@@ -34,6 +34,12 @@ REXCVAR_DEFINE_BOOL(pgr3_fxaa, false, kCvarGroup,
 REXCVAR_DEFINE_BOOL(pgr3_scaled_post_filters, true, kCvarGroup,
                     "At a resolution scale, fit the race resolve's taps to a "
                     "host pixel and upscale the glow smoothly");
+// Off by default: an aliased destination is never written itself, and PGR3's
+// crowd impostor atlas (resolved once while a course loads) came back as
+// stale video memory once its 512x192 source surface moved on.
+REXCVAR_DEFINE_BOOL(pgr3_resolve_alias, false, kCvarGroup,
+                    "Let a same-size, same-format resolve alias its source "
+                    "surface instead of copying it");
 
 namespace pgr3::gpu {
 
@@ -523,7 +529,7 @@ void Video::ResolveRtToTexture(GuestTexture *dst,
     }
   }
 
-  if (CanAliasResolveLocked(src, dst)) {
+  if (REXCVAR_GET(pgr3_resolve_alias) && CanAliasResolveLocked(src, dst)) {
     s.last_resolved_dst = dst;
     NoteTileContentLocked(s, dst);
     s.draw_framebuffer_bound = false;

@@ -668,36 +668,68 @@ their depth plane.
 - **Supporting changes:** `R32_FLOAT` joined the render-target whitelist, and
   `pgr3_dump_frames` writes it as grey.
 
-**Missing scenery (under investigation).** Against the xenos reference of
-the same London stretch, the native race lacks:
-- trees, fences, the crowd, lane markings and cones;
-- textures on the buildings beside the road, which come out as flat
-  colour blocks.
+**Missing scenery (under investigation).** Against xenos on the same London
+stretch (the starting grid and the Embankment), the native race lacks:
+- the 3D trees, fences, the crowd, lane markings and cones;
+- textures on the buildings beside the road, which come out as flat colour
+  blocks.
 
-Findings so far:
-- **Nothing is dropped.** Every draw is recorded (`pgr3_devmode` draw
-  counters) and no pipeline fails.
-- **Tree impostors draw correctly.** They are quad-list sprites
-  (`vs_820BD620`, `ps_820BC970`) and come out at the right size and place:
-  `scratch/vsemu.py` evaluates the recompiled HLSL on traced inputs, and
-  `pgr3_debug_solid_vs` shows them as ~2x3-pixel trees at the horizon.
-  There are no near trees.
-- **The impostor atlas is baked at load.** `ps_820BC970` point-samples the
-  512x192 target `0x40396320`, thresholds the samples, and looks the result
-  up in a material crop sheet. The atlas is drawn once while loading
-  (`sub_82276310`): 198 draws of the pulled `vs_820C2DB8`, plus
-  `vs_820C1A50`. The building shader samples it too (`t2`).
-- **The atlas looks wrong, but its vertex shader evaluates sanely.** The atlas
-  dumps as structured noise, while `vsemu.py` puts its vertices into atlas
-  cells. Whether the noise is wrong or just encoded data needs a xenos dump of
-  `0x40396320` to compare.
-- **The xenos build can't currently provide that dump.** It no longer reaches
-  the race: the same binary did yesterday, but now presents at 30 frames a
-  second, and its resolve dumps are frozen noise. That needs looking at first.
+What is settled:
+- **xenos references need `--readback_resolve=full`.** Without it the xenos
+  dump tool reads resolve memory that is never written, and every dump is
+  noise or black. That flag, not a broken xenos build, explains the bad
+  references earlier in this session. Use the Phase 4 script
+  (`start@1500,a@2100,a@2700..4800,rt@...`): the race loads at about present
+  4530 and the countdown runs to about 4900. `pgr3_dump_frames` now also
+  decodes `k_6_5_5`.
+- **The resolve alias lost the crowd impostor atlas (fixed).** The 512x192
+  texture `0x40396320` (xenos `0x4041E320`, `k_6_5_5`) is the crowd impostor
+  atlas, baked once while the course loads:
+  - `vs_820C2DB8` draws it with `ps_820BC830`, which writes material slot,
+    U and V;
+  - the sprite pixel shader `ps_820BC970` decodes it.
+
+  Resolve aliasing skipped the copy, so the destination was never written
+  and came back as stale video memory. `pgr3_resolve_alias` now defaults to
+  off, and the atlas matches xenos.
+- **The game submits the same scenery in both builds.** `pgr3_scenery_probe`
+  hooks the scenery draw loop `sub_8220D0B8` and its material setup
+  `sub_82208C28` in both builds. They agree to within 0.1%: about 12 calls a
+  frame, 77% of object records visible, every material setup succeeding.
+  Ruled out as gates:
+  - occlusion queries (`pgr3_debug_occlusion_samples` at 0 or 1000 changes
+    nothing);
+  - fences (the native fence is always 0, so never pending);
+  - CPU reads of depth resolves (`pgr3_debug_fill_depth_resolve` changes
+    nothing).
+- **Their geometry never lands on screen.** `pgr3_debug_solid_vs` (now a
+  list, cycling every `pgr3_debug_solid_cycle` frames) paints each scene VS
+  magenta in turn on the Embankment:
+  - visible: the skyline `CB1B81A2` (`vs_820B3090`), the road `083E7FC7`, car
+    parts `84EC1F77`/`69082D7B`/`2952D8FC`, and the HUD `368A21C8`;
+  - no magenta pixels: `7BDFF0AF34C9EEA3` (`vs_820B25A8`, about 710 draws a
+    frame, IA-fed: POSITION0, NORMAL0-2, TEXCOORD0-1, COLOR0, BLENDWEIGHT0)
+    and the pulled instanced `CAFD4C8595F5CD6B` (`vs_820C4738`, about 500).
+  Those two carry the missing scenery: submitted, but placed off screen,
+  degenerate, or failing depth.
+- **Tools added:** `scratch/vsemu.py` evaluates a recompiled VS on
+  `pgr3_trace_vs` dumps (`pgr3_trace_vs_records` sets how many records), and
+  `scratch/sprites.py` sizes every tree sprite of a frame.
+
+**Next:** trace `7BDFF0AF34C9EEA3` (`pgr3_trace_vs`) on the starting grid and
+evaluate it with `vsemu.py`:
+- decide whether the decoded inputs or the constants give off-screen
+  positions;
+- check its BLENDWEIGHT and the NORMAL1/NORMAL2 formats, the first users of
+  those paths;
+- compare the same draw's constants against xenos, by adding a constant dump
+  to the xenos trace.
+
+Then the same for `vs_820C4738`'s near instances (only far instances were
+checked).
 
 **Open, in rough order of what is visible in a race:**
-1. **Missing scenery,** above: get a xenos reference of the impostor atlas
-   and the Embankment, then compare.
+1. **Missing scenery,** above.
 2. **MSAA.** The scene is 2x MSAA and the environment passes 4x; the host
    renders everything at 1x.
 3. **Remaining textures:** linear volume textures (64x64x32 `k_8_8_8_8`).

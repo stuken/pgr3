@@ -191,9 +191,12 @@ void DumpTexture(u32 frame, u32 seq, u32 va, const std::filesystem::path &dir) {
   // 32bpp: k_8_8_8_8, k_2_10_10_10, k_8_8_8_8_A, k_16_16_FLOAT.
   // 64bpp: k_16_16_16_16_FLOAT, PGR3's HDR scene format. Floats are clamped to
   // 0..1 for the BMP and the largest component is logged.
+  // 16bpp: k_6_5_5 (PGR3's tree impostor atlas), x in bits 0-4, y 5-9,
+  // z 10-15.
   const bool half = format == 31 || format == 32;
-  const u32 bpp = format == 32 ? 8 : 4;
-  if (format != 6 && format != 7 && format != 14 && !half) {
+  const bool f655 = format == 5;
+  const u32 bpp = format == 32 ? 8 : f655 ? 2 : 4;
+  if (format != 6 && format != 7 && format != 14 && !half && !f655) {
     PGR3_INFO("pgr3_dump_frames: skip 0x{:08X} format {}", va, format);
     return;
   }
@@ -240,13 +243,22 @@ void DumpTexture(u32 frame, u32 seq, u32 va, const std::filesystem::path &dir) {
   for (u32 y = 0; y < height; ++y) {
     for (u32 x = 0; x < width; ++x) {
       const u32 off = tiled ? u32(tu::GetTiledOffset2D(i32(x), i32(y), pitch,
-                                                       bpp == 8 ? 3 : 2))
+                                                       bpp == 8 ? 3 : bpp == 2 ? 1 : 2))
                             : (y * pitch + x) * bpp;
       if (off + bpp > pitch * aligned_h * bpp)
         continue;
-      const u32 v = swap(src + off);
+      // A 16bpp texel is swapped within its own two bytes (8in16).
+      const u32 v = f655 ? (endian == 1 || endian == 2
+                                ? u32(src[off]) << 8 | src[off + 1]
+                                : u32(src[off + 1]) << 8 | src[off])
+                         : swap(src + off);
       u8 comp[6] = {u8(v), u8(v >> 8), u8(v >> 16), u8(v >> 24), 0, 255};
-      if (format == 7) { // 2_10_10_10: keep the top 8 bits of each channel
+      if (f655) {
+        comp[0] = u8((v & 0x1F) * 255 / 31);
+        comp[1] = u8(((v >> 5) & 0x1F) * 255 / 31);
+        comp[2] = u8(((v >> 10) & 0x3F) * 255 / 63);
+        comp[3] = 255;
+      } else if (format == 7) { // 2_10_10_10: keep the top 8 bits of each channel
         comp[0] = u8((v >> 2) & 0xFF);
         comp[1] = u8((v >> 12) & 0xFF);
         comp[2] = u8((v >> 22) & 0xFF);

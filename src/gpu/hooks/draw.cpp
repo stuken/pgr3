@@ -48,6 +48,12 @@ REXCVAR_DEFINE_STRING(pgr3_trace_vs, "", kCvarGroup,
                       "In the pgr3_trace_frame frames, trace only the draws of the "
                       "VS with this hash (hex), with its constants and first "
                       "stream records");
+REXCVAR_DEFINE_STRING(pgr3_debug_fill_depth_resolve, "", kCvarGroup,
+                      "Bring-up experiment: fill each depth resolve's guest "
+                      "texture memory with this 32-bit value (hex), as if the "
+                      "GPU had written it back");
+REXCVAR_DEFINE_INT32(pgr3_trace_vs_records, 8, kCvarGroup,
+                     "How many records of streams 0 and 1 pgr3_trace_vs dumps");
 REXCVAR_DEFINE_STRING(pgr3_debug_skip_vs, "", kCvarGroup,
                       "Bring-up experiment: skip draws whose vertex shader hash "
                       "(hex, as pgr3_trace_frame prints it) is in this comma list");
@@ -409,7 +415,8 @@ void TraceVertexShaderInputs(const D3DDevice &dev, const DrawArgs &args) {
     const u32 base = (u32(vb->Fetch0) & ~0x3u) + dev.streams[stream][0];
     const auto *w = pgr3::mem::at<const be_u32>(base);
     std::string records;
-    for (u32 i = 0; w && i < 8 * stride / 4; ++i)
+    const u32 count = u32(std::max(REXCVAR_GET(pgr3_trace_vs_records), 1));
+    for (u32 i = 0; w && i < count * stride / 4; ++i)
       records += std::format("{}{:08X}", i % (stride / 4) ? " " : " | ", u32(w[i]));
     PGR3_INFO("[trace]   vs-input stream{} stride={} at 0x{:08X}{}", stream,
               stride, base, records);
@@ -825,6 +832,26 @@ u32 FloatColorToArgb(const be_f32 *c) {
 
 // The work of D3DDevice_Resolve, shared with EndTiling. rect_va and point_va
 // are guest D3DRECT/D3DPOINT pointers, 0 for the whole surface and the origin.
+// pgr3_debug_fill_depth_resolve: the texture's whole tiled extent (32bpp,
+// 32x32-aligned) at its fetch constant's physical base, big-endian.
+void FillGuestTexture(u32 texture, u32 value) {
+  const auto *fc = pgr3::mem::at<const be_u32>(texture + 16);
+  auto *memory = REX_KERNEL_MEMORY();
+  if (!fc || !memory)
+    return;
+  const u32 base = u32(fc[1]) & 0xFFFFF000u;
+  const u32 pitch = ((u32(fc[0]) >> 22) & 0x1FFu) * 32;
+  const u32 height = ((u32(fc[2]) >> 13) & 0x1FFFu) + 1;
+  const u32 dwords = pitch * ((height + 31) & ~31u);
+  auto *dst = reinterpret_cast<be_u32 *>(memory->TranslatePhysical(base));
+  if (!dst || !base)
+    return;
+  for (u32 i = 0; i < dwords; ++i)
+    dst[i] = value;
+  PGR3_WARN_FIRST(8, "filled depth resolve 0x{:08X} ({}x{}, base 0x{:08X}) with 0x{:08X}",
+                  texture, pitch, height, base, value);
+}
+
 struct ResolveArgs {
   u32 flags;
   u32 rect_va;
@@ -891,6 +918,11 @@ void ResolveNative(const ResolveArgs &a) {
       (flags & (kResolveClearRenderTarget | kResolveClearDepthStencil)))
     PGR3_WARN_FIRST(4, "Resolve: clear limited to a source rect clears the "
                    "whole target (flags=0x{:X})", flags);
+  if (depth && dest) {
+    const std::string &fill = REXCVAR_GET(pgr3_debug_fill_depth_resolve);
+    if (!fill.empty())
+      FillGuestTexture(dest, u32(std::stoul(fill, nullptr, 16)));
+  }
   if (dest && src && src->texture) {
     const plume::RenderFormat format =
         depth ? plume::RenderFormat::R32_FLOAT : src->format;

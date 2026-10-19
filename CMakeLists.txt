@@ -91,7 +91,8 @@ set(PGR3_COMMON_SOURCES
     src/core/memory_helpers.cpp
     src/core/settings.cpp
     src/platform/guest_abort_log.cpp
-    src/platform/input_script.cpp)
+    src/platform/input_script.cpp
+    src/platform/scenery_probe.cpp)
 
 if(WIN32)
     add_executable(pgr3 WIN32 ${PGR3_SOURCES} ${PGR3_ICON_RC})

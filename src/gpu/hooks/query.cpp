@@ -7,22 +7,27 @@
 // stay the guest's (the device's slot pool is seeded in Direct3D_CreateDevice).
 // Nothing ever writes the slots, though: the guest's ring is discarded. So
 // Issue does nothing, and GetData answers at once: an event has completed,
-// and an occlusion query saw kVisibleSamples samples in each of its four
+// and an occlusion query saw 2^20 samples in each of its four
 // counts. That disables the game's occlusion culling and treats every flare
 // or probe as visible, which errs towards drawing too much; real host
 // occlusion queries are a later step.
 
+#include <rex/cvar.h>
 #include <rex/hook.h>
 #include <rex/types.h>
 
 #include "core/logging.h"
 #include "core/memory_helpers.h"
+#include "core/settings.h" // kCvarGroup
+
+REXCVAR_DEFINE_INT32(pgr3_debug_occlusion_samples, 1 << 20, kCvarGroup,
+                     "Bring-up experiment: the sample count every occlusion "
+                     "query reports");
 
 namespace {
 
 constexpr u32 kQueryTypeEvent = 8;
 constexpr u32 kQueryTypeOcclusion = 9;
-constexpr u32 kVisibleSamples = 1u << 20;
 
 } // namespace
 
@@ -45,7 +50,7 @@ REX_HOOK_RAW(D3DQuery_GetData) {
     if (type == kQueryTypeEvent)
       value = 1;
     else if (type == kQueryTypeOcclusion)
-      value = kVisibleSamples;
+      value = u32(REXCVAR_GET(pgr3_debug_occlusion_samples));
     else
       PGR3_WARN_FIRST(4, "D3DQuery_GetData: query type {} answered with zeros", type);
     for (u32 i = 0; i < size / 4 && i < 4; ++i)

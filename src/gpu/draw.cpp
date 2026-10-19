@@ -29,6 +29,7 @@
 #include "gpu/pipeline/pso_recorder.h"
 
 namespace pgr3::gpu {
+u32 PresentCount();
 namespace {
 
 // Render state comes straight from the Xenos register shadows RR6's
@@ -50,6 +51,8 @@ REXCVAR_DEFINE_BOOL(pgr3_debug_ztest_always, false, kCvarGroup,
 REXCVAR_DEFINE_STRING(pgr3_debug_solid_vs, "", kCvarGroup,
                       "Bring-up experiment: draw the geometry of the vertex "
                       "shader with this hash (hex) in solid magenta");
+REXCVAR_DEFINE_INT32(pgr3_debug_solid_cycle, 10, kCvarGroup,
+                     "Frames each shader of a pgr3_debug_solid_vs list stays magenta");
 REXCVAR_DEFINE_BOOL(pgr3_debug_alpha_test_off, false, kCvarGroup,
                     "Bring-up experiment: turn off every alpha test");
 REXCVAR_DEFINE_BOOL(pgr3_debug_cull_none, false, kCvarGroup,
@@ -84,10 +87,24 @@ void ReadDeviceRenderState(VideoState &s, u32 device_guest) {
                        ConvertBlendMode((blend >> 24) & 0x1Fu));
 
   {
+    // A comma list cycles: every pgr3_debug_solid_cycle frames the next
+    // shader of the list is the one drawn magenta.
     const std::string &solid = REXCVAR_GET(pgr3_debug_solid_vs);
-    const bool debug_solid =
-        !solid.empty() && s.vertex_shader && s.vertex_shader->shaderCacheEntry &&
-        std::format("{:016X}", s.vertex_shader->shaderCacheEntry->hash) == solid;
+    bool debug_solid = false;
+    if (!solid.empty() && s.vertex_shader && s.vertex_shader->shaderCacheEntry) {
+      std::vector<std::string> hashes;
+      for (size_t pos = 0; pos <= solid.size();) {
+        size_t end = solid.find(',', pos);
+        if (end == std::string::npos)
+          end = solid.size();
+        hashes.push_back(solid.substr(pos, end - pos));
+        pos = end + 1;
+      }
+      const u32 cycle = u32(std::max(REXCVAR_GET(pgr3_debug_solid_cycle), 1));
+      const std::string &wanted = hashes[(PresentCount() / cycle) % hashes.size()];
+      debug_solid =
+          std::format("{:016X}", s.vertex_shader->shaderCacheEntry->hash) == wanted;
+    }
     Video::SetDirtyValue(dirty, ps.debugSolid, debug_solid);
   }
   Video::SetDirtyValue(dirty, ps.zEnable, (depth & 0x2u) != 0);
