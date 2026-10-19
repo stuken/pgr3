@@ -179,8 +179,12 @@ void CopyLinearFace(const MirrorLayout &L,
   }
 }
 
-// The tiled footprint pads W/H to 32 blocks and depth to 4.
+// The tiled footprint pads W/H to 32 blocks and depth to 4. A linear volume
+// (PGR3's 64x64x32 k_8_8_8_8 and 256x256x4 DXT5 ones) is rows at the fetch
+// pitch, rounded up to 32 blocks, in slices of the height rounded up to 32
+// block rows, as xenia lays out a base level.
 GuestTexture *BuildVolumeMirror(const MirrorLayout &L, const u8 *src,
+                                const xe::xe_gpu_texture_fetch_t &fetch,
                                 u32 guest_va) {
   const size_t slice_size = FaceStagingSize(L);
   const size_t src_size = size_t(L.aligned_w) * size_t(L.aligned_h) *
@@ -188,7 +192,24 @@ GuestTexture *BuildVolumeMirror(const MirrorLayout &L, const u8 *src,
                           size_t(L.bytes_per_block);
 
   std::vector<u8> staging(slice_size * L.depth, 0u);
-  for (int z = 0; z < static_cast<int>(L.depth); ++z) {
+  if (!fetch.tiled) {
+    const u32 pitch_texels =
+        fetch.pitch ? u32(fetch.pitch) << 5 : rex::align(L.width, 32u);
+    const size_t src_row_bytes =
+        size_t(rex::align(pitch_texels / L.texels_per_edge, 32u)) *
+        L.bytes_per_block;
+    const size_t src_slice_bytes =
+        src_row_bytes * rex::align(L.block_h, 32u);
+    const size_t row_bytes = size_t(L.block_w) * L.bytes_per_block;
+    for (u32 z = 0; z < L.depth; ++z)
+      for (u32 by = 0; by < L.block_h; ++by)
+        tc::CopySwapBlock(L.endian,
+                          staging.data() + z * slice_size +
+                              size_t(by) * L.staging_row_bytes,
+                          src + z * src_slice_bytes + by * src_row_bytes,
+                          row_bytes);
+  }
+  for (int z = 0; fetch.tiled && z < static_cast<int>(L.depth); ++z) {
     for (int by = 0; by < static_cast<int>(L.block_h); ++by) {
       for (int bx = 0; bx < static_cast<int>(L.block_w); ++bx) {
         const i32 so = tu::GetTiledOffset3D(bx, by, z, L.aligned_w, L.aligned_h,
@@ -474,22 +495,26 @@ GuestTexture *GetOrCreateNativeMirror(u32 guest_va) {
                     fetch.format == xe::TextureFormat::k_DXN ||
                     fetch.format == xe::TextureFormat::k_DXT5A);
   // Uncompressed k_8_8_8_8 and k_8 (UI, the boot screen, the movie planes),
-  // and k_16 (PGR3's 128x128 linear race textures). 2D only: cube/volume
-  // assume DXT blocks.
-  const bool rgba8 = (fetch.format == xe::TextureFormat::k_8_8_8_8 ||
-                      fetch.format == xe::TextureFormat::k_8 ||
-                      fetch.format == xe::TextureFormat::k_16 ||
-                      fetch.format == xe::TextureFormat::k_5_6_5) &&
-                     fetch.dimension <= xe::DataDimension::k2DOrStacked;
+  // and k_16 (PGR3's 128x128 linear race textures), 2D; and k_8_8_8_8
+  // volumes (PGR3's 64x64x32 linear ones). Cubes assume DXT blocks, and
+  // k_5_6_5 is expanded by the 2D path only.
+  const bool rgba8 = ((fetch.format == xe::TextureFormat::k_8_8_8_8 ||
+                       fetch.format == xe::TextureFormat::k_8 ||
+                       fetch.format == xe::TextureFormat::k_16 ||
+                       fetch.format == xe::TextureFormat::k_5_6_5) &&
+                      fetch.dimension <= xe::DataDimension::k2DOrStacked) ||
+                     (fetch.format == xe::TextureFormat::k_8_8_8_8 &&
+                      fetch.dimension == xe::DataDimension::k3D);
   const bool supported_dim = fetch.dimension != xe::DataDimension::k1D;
   // DXT ships endian kNone/k8in16, and k_8_8_8_8 ships k8in32 (full word swap).
   const bool endian_ok =
       fetch.endianness <= (dxt ? xe::Endian::k8in16 : xe::Endian::k8in32);
 
-  // Non-tiled is only taken for 2D (pgr3's CopyLinearFace): the volume and
-  // cube deswizzlers handle tiled data alone.
-  const bool linear_ok =
-      fetch.tiled || fetch.dimension == xe::DataDimension::k2DOrStacked;
+  // Non-tiled is taken for 2D (pgr3's CopyLinearFace) and volumes; the cube
+  // deswizzler handles tiled data alone.
+  const bool linear_ok = fetch.tiled ||
+                         fetch.dimension == xe::DataDimension::k2DOrStacked ||
+                         fetch.dimension == xe::DataDimension::k3D;
   if (fetch.type != xe::FetchConstantType::kTexture || !supported_dim ||
       !(dxt || rgba8) || !endian_ok || !linear_ok) {
     // Capped: an unsupported texture is retried every frame it is bound.
@@ -517,7 +542,7 @@ GuestTexture *GetOrCreateNativeMirror(u32 guest_va) {
   GuestTexture *tex = nullptr;
   switch (fetch.dimension) {
   case xe::DataDimension::k3D:
-    tex = BuildVolumeMirror(layout, src, guest_va);
+    tex = BuildVolumeMirror(layout, src, fetch, guest_va);
     break;
   case xe::DataDimension::kCube:
     tex = BuildCubeMirror(layout, src, guest_va);
