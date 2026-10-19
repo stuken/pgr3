@@ -30,6 +30,10 @@ GuestTexture *GetOrCreateNativeMirror(u32 guest_va);
 // when its fetch constant changes. nullptr when unsupported.
 GuestTexture *ResolveOrMirrorGuestTexture(u32 guest_va);
 
+// Bumped whenever a mirror or resolve target is created, rebuilt or evicted:
+// a binding made under the same generation (and frame) still holds.
+u64 TextureMirrorGeneration();
+
 // RR6: visits every live resolve target (frame dumps).
 void ForEachResolveTarget(
     const std::function<void(u32 guest_va, GuestTexture *tex)> &fn);

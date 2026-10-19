@@ -99,6 +99,14 @@ constexpr u32 kTextureFetchOffset = offsetof(D3DTexture, Format);
 // so ResolveOrMirrorGuestTexture's per-thread cache never hands out one that
 // has gone.
 std::atomic<u64> g_texture_generation{1};
+} // namespace
+
+u64 TextureMirrorGeneration() {
+  return g_texture_generation.load(std::memory_order_acquire);
+}
+
+namespace {
+
 void BumpTextureGeneration() {
   g_texture_generation.fetch_add(1, std::memory_order_acq_rel);
 }
@@ -873,16 +881,17 @@ GuestTexture *ResolveOrMirrorGuestTextureSlow(u32 guest_va, const u32 (&fc)[6]) 
       constexpr u32 kSamples = 64, kSampleBytes = 16;
       u64 samples[kSamples * kSampleBytes / 8];
       u32 n = 0;
+      // One checked translation for each end of the range; the samples in
+      // between read through the host pointer.
       auto take = [&](u32 base, u32 span, u32 count) {
         if (!base || span < kSampleBytes)
           return;
+        const auto *b = pgr3::mem::try_at<const u8>(base);
+        if (!b || !pgr3::mem::try_at<const u8>(base + span - 1))
+          return;
         for (u32 i = 0; i < count && n < kSamples; ++i, ++n) {
           const u32 off = u32(u64(span - kSampleBytes) * i / std::max(count - 1, 1u)) & ~15u;
-          const auto *b = pgr3::mem::try_at<const u8>(base + off);
-          if (b)
-            std::memcpy(&samples[n * 2], b, kSampleBytes);
-          else
-            samples[n * 2] = samples[n * 2 + 1] = 0;
+          std::memcpy(&samples[n * 2], b + off, kSampleBytes);
         }
       };
       take(fetch.base_address << 12, bytes, fetch.mip_address ? 48 : 64);

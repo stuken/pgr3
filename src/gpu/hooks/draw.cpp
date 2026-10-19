@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstring>
 #include <format>
 #include <mutex>
 #include <string>
@@ -140,17 +141,49 @@ plume::RenderPrimitiveTopology MapPrimitiveType(u32 prim) {
 }
 
 // Pixel samplers 0..15: device.textures[s] pairs with fetch constant s.
+// Most draws bind what the draw before them did in most slots. A slot whose
+// texture, fetch constant, frame and mirror generation all match the last
+// draw's still holds the right binding, so it skips the lookup and the bind.
 void BindGuestTextures(const D3DDevice &dev) {
+  struct Slot {
+    u32 va = 0;
+    u32 fetch[6] = {};
+  };
+  thread_local Slot t_last[16];
+  thread_local u64 t_generation = 0, t_frame = ~0ull;
+  const u64 generation = pgr3::gpu::TextureMirrorGeneration();
+  const u64 frame = pgr3::gpu::GuestMirrorFrame();
+  const bool same_epoch = generation == t_generation && frame == t_frame;
+  t_generation = generation;
+  t_frame = frame;
   pgr3::gpu::GuestTexture *textures[16] = {};
+  u32 resolved = 0, unresolved = 0;
+  bool any = false;
   for (u32 i = 0; i < 16; ++i) {
-    if (const u32 tex_va = dev.textures[i]) {
-      auto *tex = pgr3::gpu::ResolveOrMirrorGuestTexture(tex_va);
-      (tex ? g_stats.textures_resolved : g_stats.textures_unresolved)
-          .fetch_add(1, std::memory_order_relaxed);
-      textures[i] = tex;
+    const u32 tex_va = dev.textures[i];
+    if (!tex_va)
+      continue;
+    u32 fetch[6];
+    for (u32 k = 0; k < 6; ++k)
+      fetch[k] = u32(dev.fetchConstants[i].dword[k]);
+    Slot &last = t_last[i];
+    if (same_epoch && last.va == tex_va &&
+        std::memcmp(last.fetch, fetch, sizeof(fetch)) == 0) {
+      ++resolved;
+      continue;
     }
+    auto *tex = pgr3::gpu::ResolveOrMirrorGuestTexture(tex_va);
+    ++(tex ? resolved : unresolved);
+    textures[i] = tex;
+    any = true;
+    // An unresolved texture leaves the slot as it was, so it is retried.
+    last.va = tex ? tex_va : 0;
+    std::memcpy(last.fetch, fetch, sizeof(fetch));
   }
-  Video::SetTextures(textures);
+  g_stats.textures_resolved.fetch_add(resolved, std::memory_order_relaxed);
+  g_stats.textures_unresolved.fetch_add(unresolved, std::memory_order_relaxed);
+  if (any)
+    Video::SetTextures(textures);
 }
 
 void CountRenderTarget() {

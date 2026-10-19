@@ -900,6 +900,24 @@ sparse texel hash (64 16-byte samples over the base level and mips, once a
 frame), as linear ones already did with a full hash: about 0.03 ms a frame,
 with the rebuild rate unchanged.
 
+**Optimisation pass 2.** Measured per draw in a London race (the draw count
+varies from 2,200 to 4,100 a frame between runs and laps, so per-draw cost is
+the comparable number): 3.98 us at the start, 2.4-2.6 us after.
+- The streamed-texture fix's sparse texel hash went through a checked
+  translation per sample, about 3 ms a frame; it now translates each range's
+  ends once.
+- Texture slots whose pointer, fetch constant, frame and mirror generation
+  match the last draw's skip the lookup and the bind.
+- Vertex and index buffers fully unchanged for 60 frames are cold: they are
+  checked by a 16-sample sparse hash each frame and fully rehashed every 8th
+  frame (staggered), so a small write to a long-static buffer shows within 8
+  frames. Hashed bytes fell from 14-20 MiB to 2-3 MiB a frame.
+- Buffer lookups already verified this frame come from a per-thread cache,
+  invalidated by a generation that uploads and evictions bump.
+What is left is spread over the draw: geometry about 1 us (texture slots and
+buffer checks), the state flush about 0.9 us (constant uploads 0.3 us; the
+rest register reads and dirty tracking).
+
 **Optional extras.**
 - **FXAA (`pgr3_fxaa`, off by default).** rr6 filtered the input of RR6's
   grading pass. PGR3's last 3D pass is the final composite (`ps_8200E300`:
