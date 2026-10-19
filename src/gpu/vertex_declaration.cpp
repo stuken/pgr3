@@ -261,6 +261,14 @@ GuestVertexDeclaration *CreateVertexDeclaration(GuestVertexElement *elements) {
         decl->swappedBlendWeights |= 1u << usage_index;
       }
       break;
+    // Bits 16 + index of the blend weight mask (swapUints in the shader).
+    // PGR3's minimap packs a colour index and an edge coordinate as SHORT2
+    // BLENDINDICES; RR6's were UBYTE4.
+    case D3DDeclUsage::kBlendIndices:
+      if (needs_bswap_swap(type)) {
+        decl->swappedBlendWeights |= 1u << (16u + usage_index);
+      }
+      break;
     case D3DDeclUsage::kTexCoord:
       if (needs_bswap_swap(type)) {
         decl->swappedTexcoords |= 1u << usage_index;
