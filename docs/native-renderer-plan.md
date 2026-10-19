@@ -753,17 +753,22 @@ lists and resolves agree one for one. Fixed:
   xenos, and the title screen's logo, which blends against destination alpha,
   appears.
 
-Still different: the title screen's logo rings are dimmer than on xenos.
+Also settled in the comparison:
+- **Linear volume textures** (two 64x64x32 `k_8_8_8_8`, one bound as t15 on
+  the scenery, and 256x256x4 and 512x512x4 DXT5 on the cars) now mirror: rows
+  at the fetch pitch rounded to 32 blocks, slices the height rounded to 32
+  block rows apart, as xenia lays out a base level.
+- **The garage preview** matches xenos now, and the bloom target is as dark as
+  xenos's in daylight (means under 2/255 in both), so neither is a fault.
 
-
+**Open, in rough order of what is visible in a race:**
 1. **MSAA.** The scene is 2x MSAA and the environment passes 4x; the host
    renders everything at 1x. Alpha to coverage then has one sample, so the
    foliage edges are hard.
-2. **A side-by-side check of the race against the xenos references,** now that
-   the scenery is in, then the other cities and night races.
-3. **Remaining textures:** linear volume textures (64x64x32 `k_8_8_8_8`).
-4. **The garage preview is overexposed,** and the bloom target stays black.
-5. The Vulkan exe has had no validation-layer pass.
+2. **The other cities and night races,** replays and movies, against xenos.
+   These need menu scripts.
+3. The title screen's logo rings are dimmer than on xenos.
+4. The Vulkan exe has had no validation-layer pass.
 
 ### Phase 6: Hardening and performance
 
