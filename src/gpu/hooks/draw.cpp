@@ -559,22 +559,114 @@ REX_HOOK_RAW(D3DDevice_BeginVertices) {
 
 namespace {
 // Records the draw BeginVertices left pending, once its vertices are written.
+// Xenos completes each rect list triple into a rectangle: the fourth corner
+// is opposite the right-angle vertex (the one off the longest edge). Builds
+// the four corners in perimeter order, byte-swapped, for the quad-list path,
+// computing the fourth in input space, which is exact for the pass-through
+// vertex shaders of PGR3's full-screen passes. A dword the three vertices
+// share (a colour) is copied, not summed. position_offset is the byte offset
+// of the screen-space x, y floats.
+bool ExpandRectList(u32 data, u32 vertex_count, u32 stride,
+                    u32 position_offset, std::vector<u32> &out) {
+  const u32 rects = vertex_count / 3;
+  const u32 dwords = stride / 4;
+  const auto *src = pgr3::mem::at<const be_u32>(data);
+  if (!rects || !dwords || stride % 4 || position_offset + 8 > stride || !src)
+    return false;
+  out.resize(size_t(rects) * 4 * dwords);
+  auto as_float = [](u32 v) {
+    float f;
+    std::memcpy(&f, &v, sizeof(f));
+    return f;
+  };
+  const u32 px = position_offset / 4;
+  for (u32 r = 0; r < rects; ++r) {
+    u32 v[3][64];
+    if (dwords > 64)
+      return false;
+    for (u32 i = 0; i < 3; ++i)
+      for (u32 d = 0; d < dwords; ++d)
+        v[i][d] = u32(src[(r * 3 + i) * dwords + d]);
+    auto edge = [&](u32 a, u32 b) {
+      const float dx = as_float(v[a][px]) - as_float(v[b][px]);
+      const float dy = as_float(v[a][px + 1]) - as_float(v[b][px + 1]);
+      return dx * dx + dy * dy;
+    };
+    // The longest edge is the diagonal; the vertex off it is the corner.
+    const float e01 = edge(0, 1), e12 = edge(1, 2), e20 = edge(2, 0);
+    u32 corner = 2;
+    if (e12 >= e01 && e12 >= e20)
+      corner = 0;
+    else if (e20 >= e01 && e20 >= e12)
+      corner = 1;
+    const u32 a = (corner + 1) % 3, b = (corner + 2) % 3;
+    u32 *o = out.data() + size_t(r) * 4 * dwords;
+    for (u32 d = 0; d < dwords; ++d) {
+      const u32 va = v[a][d], vb = v[b][d], vc = v[corner][d];
+      u32 fourth = va;
+      if (!(va == vb && vb == vc)) {
+        const float f = as_float(va) + as_float(vb) - as_float(vc);
+        std::memcpy(&fourth, &f, sizeof(fourth));
+      }
+      o[d] = va;
+      o[dwords + d] = vc;
+      o[2 * dwords + d] = vb;
+      o[3 * dwords + d] = fourth;
+    }
+  }
+  return true;
+}
+
+// The byte offset of POSITION0 in stream 0 of the bound declaration (0 if
+// there is none).
+u32 PositionOffset() {
+  auto &s = pgr3::gpu::state();
+  std::lock_guard lock(s.mutex);
+  const auto *decl = s.vertex_declaration;
+  if (!decl || !decl->vertexElements)
+    return 0;
+  for (u32 i = 0; i + 1 < decl->vertexElementCount; ++i) {
+    const auto &e = decl->vertexElements[i];
+    if (u32(e.stream) == 0 && e.usage == 0 && e.usageIndex == 0)
+      return u32(e.offset);
+  }
+  return 0;
+}
+
 void FlushPendingUP() {
-  const PendingUP p = g_pending;
+  PendingUP p = g_pending;
   g_pending = {};
   if (!p.data || !p.vertex_count || !p.stride)
     return;
-  auto alloc = pgr3::gpu::UploadGuestBytesByteSwap32(
-      p.data, p.vertex_count * p.stride, /*alignment=*/4);
+  const bool rect_list = static_cast<xe::PrimitiveType>(p.primitive_type) ==
+                         xe::PrimitiveType::kRectangleList;
+  const u32 traced_prim = p.primitive_type, traced_count = p.vertex_count;
+  pgr3::gpu::ConstantAllocation alloc;
+  if (rect_list) {
+    std::vector<u32> quads;
+    if (!ExpandRectList(p.data, p.vertex_count, p.stride, PositionOffset(),
+                        quads)) {
+      PGR3_WARN_FIRST(4, "rect list of {} vertices, stride {} not expanded",
+                      p.vertex_count, p.stride);
+      return;
+    }
+    alloc = pgr3::gpu::UploadHostBytes(
+        quads.data(), static_cast<u32>(quads.size() * sizeof(u32)), 4);
+    p.vertex_count = p.vertex_count / 3 * 4;
+    p.primitive_type = static_cast<u32>(xe::PrimitiveType::kQuadList);
+  } else {
+    alloc = pgr3::gpu::UploadGuestBytesByteSwap32(
+        p.data, p.vertex_count * p.stride, /*alignment=*/4);
+  }
   if (!alloc.memory)
     return;
   if (const auto *dev = pgr3::mem::at<const D3DDevice>(p.device)) {
     if (TracingThisFrame()) {
-      TraceDraw("DrawUP", *dev, p.primitive_type, p.vertex_count);
-      if (p.vertex_count <= 6) {
+      TraceDraw("DrawUP", *dev, traced_prim, traced_count);
+      if (traced_count <= 6) {
         std::string verts;
         const auto *f = pgr3::mem::at<const be_f32>(p.data);
-        for (u32 i = 0; f && i < p.vertex_count * p.stride / 4; ++i)
+        for (u32 i = 0; f && i < traced_count * p.stride / 4; ++i)
           verts += std::format("{}{:.4f}", i % (p.stride / 4) ? "," : " | ",
                                float(f[i]));
         PGR3_INFO("[trace]   verts{}", verts);

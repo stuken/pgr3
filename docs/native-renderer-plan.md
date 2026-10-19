@@ -16,7 +16,7 @@ than repeating it. SDK: rexglue 0.10.0.
 | 2. XenosRecomp | **Done.** All 309 shaders compile to DXIL and SPIR-V with `REBLUE_RECOMP PGR3_RECOMP`, on branch `pgr3` of the fork in `thirdparty/XenosRecomp` (uncommitted). RR6's 176 still compile, and their HLSL changes only as intended. See Phase 2 findings. |
 | 3. Build integration | **Done.** Both configurations build. Every build makes the shader cache; `PGR3_NATIVE_GPU=ON` builds `pgr3.exe` (D3D12) and `pgr3_vk.exe` (Vulkan) on plume with the cache and 548 prelinked variants. Until Phase 5 they log that the renderer is missing and exit. |
 | 4. D3D identification (XDK 2099) | **Done.** `config/d3d.toml` names 74 functions, including `BeginTiling`/`EndTiling` and `XPhysicalAlloc`/`Free`. `src/gpu/d3d.h` has the 2099 device and resource layouts, every field checked against PGR3's code. The render setup is confirmed: 1024x600, 2x MSAA, 7e3. See Phase 4 findings. |
-| 5. Native renderer bring-up | **In progress.** rr6's renderer is ported and runs PGR3 on D3D12 from boot through the front end, garage and menus into a London race: course, buildings and cars render, with the HUD. Instanced fetches are pulled in the shader. Open: rect lists, MSAA and depth resolves, shadows, post effects, some texture formats. See Phase 5 progress. |
+| 5. Native renderer bring-up | **In progress.** rr6's renderer is ported and runs PGR3 on D3D12 from boot through the front end, garage and menus into a London race: course, buildings and cars render, with the HUD. Instanced fetches are pulled in the shader. Rect lists are expanded to quads. Open: MSAA and depth resolves, shadows, post effects, some texture formats. See Phase 5 progress. |
 | 6. Hardening and performance | Not started. |
 | 7. Geometry Wars (`gw.xex`) | Out of scope until 5 is done. |
 
@@ -646,18 +646,27 @@ them.
   block in the sky is gone, and the Vulkan exe now reaches the race as well.
 - **New switch:** `pgr3_debug_skip_vs` skips draws by VS hash.
 
+**Rect lists** (primitive 8) come only through `BeginVertices`/`DrawVerticesUP`:
+two 3-vertex full-screen passes per race frame, with the viewport transform off.
+- **The passes:** one on the scene, sampling the scene depth resolve, and the
+  bloom downsample to 341x200.
+- **Expansion:** each triple is expanded on the CPU to a quad. The fourth
+  corner is opposite the right-angle vertex (the vertex off the longest
+  edge), computed in input space, which is exact for their pass-through
+  vertex shaders. Dwords the three vertices share are copied. The quad then
+  takes the quad-list path. Before this, both passes covered only half their
+  target.
+
 **Open, in rough order of what is visible in a race:**
-1. **Rect lists** (primitive 8), drawn as triangle lists, so they lose half
-   their area; post passes use them.
-2. **MSAA and depth resolves.** The scene is 2x MSAA and environment passes
+1. **MSAA and depth resolves.** The scene is 2x MSAA and environment passes
    4x; depth resolves (flags `0x4`/`0x14`) are not modelled, which also
    leaves shadow maps empty (the dark band on the road); a 1024x600
    `k_24_8_FLOAT` texture (the scene's depth resolve) is sampled and rejected.
-3. **Remaining textures:** linear volume textures (64x64x32 `k_8_8_8_8`), and
+2. **Remaining textures:** linear volume textures (64x64x32 `k_8_8_8_8`), and
    the 512x192 one that decodes as noise.
-4. **The garage preview is overexposed,** and the race needs checking against
-   the xenos references once 1-3 are in.
-5. Not yet compared frame by frame with the xenos references; the Vulkan exe
+3. **The garage preview is overexposed,** and the race needs checking against
+   the xenos references once 1-2 are in; the bloom target stays black.
+4. Not yet compared frame by frame with the xenos references; the Vulkan exe
    has had no validation-layer pass.
 
 ### Phase 6: Hardening and performance
