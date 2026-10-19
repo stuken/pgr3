@@ -335,6 +335,9 @@ struct VideoState {
   std::unique_ptr<plume::RenderBuffer> occlusion_counter[kNumFrames];
   std::unique_ptr<plume::RenderBuffer> occlusion_readback[kNumFrames];
   std::unique_ptr<plume::RenderBuffer> occlusion_zero; // UploadBuffer 4B (=0)
+  // Bound in place of an empty stream's root SRV on D3D12, which cannot be
+  // null. Pulled fetches never read it: an empty stream has size 0.
+  std::unique_ptr<plume::RenderBuffer> pulled_stream_null;
   bool occlusion_counting = false; // between D3DQuery_Issue BEGIN and END
   bool occlusion_result_pending[kNumFrames] =
       {}; // per-slot: counter->readback copy in flight

@@ -18,6 +18,8 @@
 
 #include <plume_render_interface.h>
 
+#include "gpu/shaders/shader_constants.h"
+
 namespace pgr3::gpu {
 
 // Mirror of the SharedConstants cbuffer (b2, space4). Layout matches the
@@ -75,8 +77,24 @@ struct SharedConstants {
   // normalised, and which are signed (shader_common.h unpackUhend3n).
   u32 hend3IntegerTexcoords{};  // c29.z, byte 472
   u32 hend3SignedTexcoords{};   // c29.w, byte 476
+  // The draw's base vertex, which D3D12's SV_VertexID leaves out of the
+  // vertex index the shaders load into r0.x (Vulkan's includes it).
+  i32 vertexIndexBase{};        // c30.x, byte 480
+  // Bit N set when TEXCOORD<N> is an unsigned integer type (UBYTE4, UINT1)
+  // bound UINT, which the shader's uintTexcoord() converts to float as Xenos
+  // does.
+  u32 uintTexcoords{};          // c30.y, byte 484
+  u32 pad30[2]{};               // c30.zw
+  // Vertex pulling (shader_common.h pullVertex): streams 0-3's bound bytes
+  // and strides, their device addresses on Vulkan (root SRVs t0-t3, space6,
+  // on D3D12), and each input location's stream | PULL_FORMAT_* << 8 and
+  // element offset, from the vertex declaration.
+  u32 pulledStreamSizes[4]{};   // c31, byte 496
+  u32 pulledStreamStrides[4]{}; // c32, byte 512
+  u64 pulledStreamAddresses[4]{}; // c33..c34, byte 528
+  u32 pulledInputs[PULL_MAX_LOCATIONS][2]{}; // c35..c45, byte 560
 };
-static_assert(sizeof(SharedConstants) == 480);
+static_assert(sizeof(SharedConstants) == 736);
 
 // memory stays valid until ResetFrame().
 struct ConstantAllocation {
@@ -108,6 +126,10 @@ ConstantAllocation UploadSharedConstants(u32 device_guest);
 // +y down) through the NDC offset. Point draws use it to cover the whole host
 // block of a guest pixel at a resolution scale. Reset to (0, 0) after.
 void SetHostPixelNudge(float x, float y);
+
+// The base vertex (indexed) or start vertex the following draws pass to the
+// host, for vertexIndexBase.
+void SetVertexIndexBase(i32 base);
 
 // Root bindings do not survive begin(), so this drops the 'shared CB still
 // bound' reuse gate. Call on every command list reset.

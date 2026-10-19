@@ -185,6 +185,20 @@ bool BuildPipelineLayout(VideoState &s) {
   // occlusion count draw, unused by every normal draw.
   layout_builder.addRootDescriptor(
       0, 5, plume::RenderRootDescriptorType::UNORDERED_ACCESS);
+  // Vertex streams 0-3 as raw SRVs (t0-t3, space6), root descriptors 4-7,
+  // for the vertex shaders that pull their inputs (shader_common.h
+  // pullVertex). Vulkan reads them through device addresses instead.
+  for (u32 i = 0; i < 4; ++i)
+    layout_builder.addRootDescriptor(
+        i, 6, plume::RenderRootDescriptorType::SHADER_RESOURCE);
+  s.pulled_stream_null = CreateHostBuffer(
+      s.device.get(),
+      plume::RenderBufferDesc::UploadBuffer(256, plume::RenderBufferFlag::NONE),
+      "pulled-stream-null");
+  if (!s.pulled_stream_null) {
+    PGR3_ERROR("Plume createBuffer for the null pulled stream failed");
+    return false;
+  }
 
   // register(b3, space4) in the copy helpers, PIXEL-only. 4 dwords:
   // [0] primary SRV slot, [1] secondary SRV slot, [2]/[3] per-pass floats.

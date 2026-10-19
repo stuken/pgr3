@@ -44,9 +44,18 @@ std::unique_ptr<plume::RenderBuffer> Upload(plume::RenderDevice *device,
                                             bool is_index, u32 element_size) {
   const plume::RenderHeapType heap =
       GeometryHeapType(device, GeometryClass::Static);
+#if defined(PGR3_D3D12)
+  constexpr plume::RenderBufferFlags kVertexFlags = plume::RenderBufferFlag::NONE;
+#else
+  // Pulled vertex shaders read vertex streams through device addresses, which
+  // plume enables for constant-flagged buffers.
+  constexpr plume::RenderBufferFlags kVertexFlags =
+      plume::RenderBufferFlag::CONSTANT |
+      plume::RenderBufferFlag::DEVICE_ADDRESSABLE;
+#endif
   const plume::RenderBufferDesc desc =
       is_index ? plume::RenderBufferDesc::IndexBuffer(size, heap)
-               : plume::RenderBufferDesc::VertexBuffer(size, heap);
+               : plume::RenderBufferDesc::VertexBuffer(size, heap, kVertexFlags);
   auto buffer = CreateHostBuffer(device, desc,
                                  is_index ? "guest-ib" : "guest-vb");
   if (!buffer)

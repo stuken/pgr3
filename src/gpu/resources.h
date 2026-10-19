@@ -22,6 +22,7 @@
 
 #include "gpu/d3d.h"
 #include "gpu/shaders/shader_cache.h"
+#include "gpu/shaders/shader_constants.h"
 
 namespace pgr3::gpu {
 
@@ -168,6 +169,9 @@ struct GuestVertexDeclaration {
   // back to the X360 raw-int-as-float vfetch the shader math (e.g. (uv+1)/512)
   // expects. SHORT2N/4N stay SNORM and leave the bit clear.
   u32 sintTexcoords = 0;
+  // Per-TEXCOORD bit for unsigned integer types (UBYTE4, UINT1) bound UINT,
+  // which uintTexcoord() converts to float (PGR3).
+  u32 uintTexcoords = 0;
   bool hasR11G11B10Normal = false;
   bool hasDec3NNormal = false; // PGR3's 10:10:10:2 tangent basis
   u32 uhend3nTexcoords = 0;    // TEXCOORDs bound raw for unpackUhend3n (PGR3)
@@ -176,6 +180,10 @@ struct GuestVertexDeclaration {
 
   bool vertexStreams[16]{};
   u32 indexVertexStream = 0;
+  // Per input location, what a pulled vertex shader reads there
+  // (SharedConstants::pulledInputs): stream | PULL_FORMAT_* << 8, and the
+  // element's byte offset. Locations the declaration omits read zero data.
+  u32 pulledInputs[PULL_MAX_LOCATIONS][2]{};
 
   GuestVertexDeclaration() = default;
   GuestVertexDeclaration(const GuestVertexDeclaration &) = delete;

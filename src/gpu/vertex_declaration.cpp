@@ -47,6 +47,34 @@ constexpr Location kLocations[] = {
 
 constexpr u32 kNoLocation = ~u32{0};
 
+// The input assembler format a pulled vertex shader decodes in its place
+// (shader_common.h PULL_FORMAT_*).
+u32 PullFormatCode(plume::RenderFormat format) {
+  using F = plume::RenderFormat;
+  switch (format) {
+  case F::R32_FLOAT: return PULL_FORMAT_R32_FLOAT;
+  case F::R32G32_FLOAT: return PULL_FORMAT_R32G32_FLOAT;
+  case F::R32G32B32_FLOAT: return PULL_FORMAT_R32G32B32_FLOAT;
+  case F::R32G32B32A32_FLOAT: return PULL_FORMAT_R32G32B32A32_FLOAT;
+  case F::R32_UINT: return PULL_FORMAT_R32_UINT;
+  case F::R32G32B32_UINT: return PULL_FORMAT_R32G32B32_UINT;
+  case F::B8G8R8A8_UNORM: return PULL_FORMAT_B8G8R8A8_UNORM;
+  case F::R8G8B8A8_UNORM: return PULL_FORMAT_R8G8B8A8_UNORM;
+  case F::R8G8B8A8_UINT: return PULL_FORMAT_R8G8B8A8_UINT;
+  case F::R16G16_SNORM: return PULL_FORMAT_R16G16_SNORM;
+  case F::R16G16B16A16_SNORM: return PULL_FORMAT_R16G16B16A16_SNORM;
+  case F::R16G16_UNORM: return PULL_FORMAT_R16G16_UNORM;
+  case F::R16G16B16A16_UNORM: return PULL_FORMAT_R16G16B16A16_UNORM;
+  case F::R16G16_SINT: return PULL_FORMAT_R16G16_SINT;
+  case F::R16G16B16A16_SINT: return PULL_FORMAT_R16G16B16A16_SINT;
+  case F::R16G16_UINT: return PULL_FORMAT_R16G16_UINT;
+  case F::R16G16B16A16_UINT: return PULL_FORMAT_R16G16B16A16_UINT;
+  case F::R16G16_FLOAT: return PULL_FORMAT_R16G16_FLOAT;
+  case F::R16G16B16A16_FLOAT: return PULL_FORMAT_R16G16B16A16_FLOAT;
+  default: return PULL_FORMAT_NONE;
+  }
+}
+
 constexpr auto resolve_location = [](D3DDeclUsage usage, u32 usage_index) {
   for (const auto &loc : kLocations) {
     if (loc.usage == usage && loc.usageIndex == usage_index) {
@@ -106,6 +134,11 @@ GuestVertexDeclaration *CreateVertexDeclaration(GuestVertexElement *elements) {
     return nullptr;
   }
   decl->hash = hash;
+  // Zero data, as the input assembler's zero-filled slot 15 reads.
+  for (auto &input : decl->pulledInputs) {
+    input[0] = 0xFFu | (PULL_FORMAT_R32_FLOAT << 8);
+    input[1] = 0;
+  }
 
   // Any 16-bit-packed format (SHORT2/4, *_N, USHORT2/4N, FLOAT16_2/4) needs
   // the shader-side .yxwz swap to undo the engine's bswap32 of physical VBs.
@@ -245,6 +278,10 @@ GuestVertexDeclaration *CreateVertexDeclaration(GuestVertexElement *elements) {
           decl->hend3IntegerTexcoords |= bit;
         input.format = g_vulkan ? plume::RenderFormat::R32_FLOAT : plume::RenderFormat::R32_UINT;
       }
+      // Unsigned integer TEXCOORDs (PGR3's UBYTE4 instance indices): Xenos
+      // converts the integer to float, the input assembler passes its bits.
+      if (type == D3DDeclType::kUByte4 || type == D3DDeclType::kUInt1)
+        decl->uintTexcoords |= 1u << usage_index;
       // Metal already converts raw signed 16-bit to float, so MoltenVK needs
       // no shader-side recovery. Vulkan and D3D12 keep UINT plus shader-side
       // sign extension.
@@ -266,6 +303,19 @@ GuestVertexDeclaration *CreateVertexDeclaration(GuestVertexElement *elements) {
 
     if (stream < std::size(decl->vertexStreams)) {
       decl->vertexStreams[stream] = true;
+    }
+    if (input.location < PULL_MAX_LOCATIONS) {
+      const u32 code = PullFormatCode(input.format);
+      if (code == PULL_FORMAT_NONE)
+        PGR3_WARN_FIRST(8, "CreateVertexDeclaration: no pulled-fetch decode for host "
+                        "format {} (usage {} index {})",
+                        static_cast<u32>(input.format), static_cast<u32>(usage), usage_index);
+      if (stream >= PULL_MAX_STREAMS)
+        PGR3_WARN_FIRST(8, "CreateVertexDeclaration: stream {} is past the {} a pulled "
+                        "vertex shader reads (usage {} index {})",
+                        stream, PULL_MAX_STREAMS, static_cast<u32>(usage), usage_index);
+      decl->pulledInputs[input.location][0] = stream | (code << 8);
+      decl->pulledInputs[input.location][1] = e->offset;
     }
     // Off the table means no shader declares it, so on Vulkan it would only
     // add an attribute at an invalid location.

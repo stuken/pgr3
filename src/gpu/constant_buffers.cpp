@@ -85,6 +85,7 @@ struct UploadState {
   float shadowPcfScale = 1.0f;
   float nudgeX = 0.0f; // SetHostPixelNudge, in host pixels
   float nudgeY = 0.0f;
+  i32 vertexIndexBase = 0; // SetVertexIndexBase
   bool sharedBound = false;
   bool ready = false;
 };
@@ -325,6 +326,8 @@ void SetHostPixelNudge(float x, float y) {
   s.nudgeY = y;
 }
 
+void SetVertexIndexBase(i32 base) { upload_state().vertexIndexBase = base; }
+
 ConstantAllocation UploadSharedConstants(u32 device_guest) {
   PGR3_CPU_ZONE("UploadSharedConstants");
   auto &s = upload_state();
@@ -449,6 +452,26 @@ ConstantAllocation UploadSharedConstants(u32 device_guest) {
       vs.vertex_declaration ? vs.vertex_declaration->hend3SignedTexcoords : 0u;
 
   s.shared.shadowPcfScale = s.shadowPcfScale;
+
+  s.shared.vertexIndexBase = s.vertexIndexBase;
+  s.shared.uintTexcoords =
+      vs.vertex_declaration ? vs.vertex_declaration->uintTexcoords : 0u;
+  // Vertex pulling: the bound streams as the input assembler sees them.
+  for (u32 i = 0; i < 4; ++i) {
+    const auto &view = vs.vertex_views[i];
+    const bool bound = view.buffer.ref != nullptr;
+    s.shared.pulledStreamSizes[i] = bound ? view.size : 0u;
+    s.shared.pulledStreamStrides[i] = bound ? vs.input_slots[i].stride : 0u;
+#if !defined(PGR3_D3D12)
+    s.shared.pulledStreamAddresses[i] =
+        bound ? view.buffer.ref->getDeviceAddress() + view.buffer.offset : 0u;
+#endif
+  }
+  if (vs.vertex_declaration)
+    std::memcpy(s.shared.pulledInputs, vs.vertex_declaration->pulledInputs,
+                sizeof(s.shared.pulledInputs));
+  else
+    std::memset(s.shared.pulledInputs, 0, sizeof(s.shared.pulledInputs));
 
   // D3DRS_VIEWPORTENABLE off (PA_CL_VTE_CNTL x/y scale and offset clear):
   // the VS outputs render target pixels, as the sun visibility probe quads

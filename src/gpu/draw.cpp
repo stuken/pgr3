@@ -367,6 +367,17 @@ bool Video::FlushRenderStateLocked(u32 device_guest) {
     const u32 count = u32{s.dirtyStates.vertexStreamLast} - first + 1u;
     s.command_list->setVertexBuffers(first, s.vertex_views + first, count,
                                      s.input_slots + first);
+#if defined(PGR3_D3D12)
+    // The same streams as raw SRVs for pulled vertex shaders (root
+    // descriptors 4-7); SharedConstants carries their sizes and strides.
+    if (first < 4) {
+      for (u32 i = 0; i < 4; ++i) {
+        const auto &ref = s.vertex_views[i].buffer;
+        s.command_list->setGraphicsRootDescriptor(
+            ref.ref ? ref : s.pulled_stream_null->at(0), 4 + i);
+      }
+    }
+#endif
   }
 
   // Re-binds only when SetIndices changed buffer/size/format, or

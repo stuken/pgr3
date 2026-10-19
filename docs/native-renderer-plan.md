@@ -16,7 +16,7 @@ than repeating it. SDK: rexglue 0.10.0.
 | 2. XenosRecomp | **Done.** All 309 shaders compile to DXIL and SPIR-V with `REBLUE_RECOMP PGR3_RECOMP`, on branch `pgr3` of the fork in `thirdparty/XenosRecomp` (uncommitted). RR6's 176 still compile, and their HLSL changes only as intended. See Phase 2 findings. |
 | 3. Build integration | **Done.** Both configurations build. Every build makes the shader cache; `PGR3_NATIVE_GPU=ON` builds `pgr3.exe` (D3D12) and `pgr3_vk.exe` (Vulkan) on plume with the cache and 548 prelinked variants. Until Phase 5 they log that the renderer is missing and exit. |
 | 4. D3D identification (XDK 2099) | **Done.** `config/d3d.toml` names 74 functions, including `BeginTiling`/`EndTiling` and `XPhysicalAlloc`/`Free`. `src/gpu/d3d.h` has the 2099 device and resource layouts, every field checked against PGR3's code. The render setup is confirmed: 1024x600, 2x MSAA, 7e3. See Phase 4 findings. |
-| 5. Native renderer bring-up | **In progress.** rr6's renderer is ported and runs PGR3 on D3D12 from boot through the front end, garage and menus into a London race: course, buildings and cars render, with the HUD. Open: instanced fetches, rect lists, MSAA and depth resolves, shadows, post effects, some texture formats. See Phase 5 progress. |
+| 5. Native renderer bring-up | **In progress.** rr6's renderer is ported and runs PGR3 on D3D12 from boot through the front end, garage and menus into a London race: course, buildings and cars render, with the HUD. Instanced fetches are pulled in the shader. Open: rect lists, MSAA and depth resolves, shadows, post effects, some texture formats. See Phase 5 progress. |
 | 6. Hardening and performance | Not started. |
 | 7. Geometry Wars (`gw.xex`) | Out of scope until 5 is done. |
 
@@ -616,25 +616,49 @@ game, so rr6's notes stay true as history. Fixes to the port itself:
   remote session) the vblank clock stops and pacing falls back to a slow
   sleep.
 
+**Vertex pulling** (the instanced fetches). Ten VS compute their fetch index:
+`index mod N` for per-vertex data and `index / N` for per-instance data, and
+`vs_820C4738` (a fifth of a race frame's indices) also fetches through a
+fetched index, so neither the input assembler nor CPU de-instancing can model
+them.
+- **Shaders:** any vfetch not indexed by `r0.x` marks the shader as pulling
+  (exactly those ten). Every fetch goes through a `VFETCH` macro, which pulling
+  shaders define as `pullVertex`.
+- **`pullVertex`** reads raw dwords from streams 0-3 and decodes them as the
+  input assembler would for the format the declaration binds (`PULL_FORMAT_*`),
+  so the existing decode wrappers apply unchanged. The streams are root SRVs
+  (`t0`-`t3`, `space6`) on D3D12 and device addresses on Vulkan.
+- **Shared constants:** a per-location table, built once per declaration, plus
+  each stream's size and stride.
+- **Vertex index:** every VS now loads the vertex index into `r0.x`, as Xenos
+  does. D3D's `SV_VertexID` leaves out the base vertex (Vulkan's includes it),
+  so the host passes it in `g_VertexIndexBase`.
+- **Fixed along the way:**
+  - Relative constant indices are clamped below as well as above. A negative
+    `a0` had read before the constant upload and page-faulted the GPU as soon
+    as `r0.x` held real indices.
+  - Integer TEXCOORDs (`UBYTE4`, `UINT1`) reached the shader as raw bits. Xenos
+    converts them to float, so they now pass through `uintTexcoord`; they carry
+    the instance-transform index.
+  - Pulled `BLENDINDICES` are converted the same way as the `uint4` input.
+- **DXC flag:** DXC now gets `-DPGR3_RECOMP` too.
+- **Result:** instanced barriers, lamp posts and tyre smoke render, the black
+  block in the sky is gone, and the Vulkan exe now reaches the race as well.
+- **New switch:** `pgr3_debug_skip_vs` skips draws by VS hash.
+
 **Open, in rough order of what is visible in a race:**
-1. **Instanced vertex fetch.** Ten VS compute their fetch index (`index mod N`
-   for per-vertex data, `index / N` for per-instance transforms, with N a
-   constant); `vs_820C4738` alone is a fifth of a race frame's indices. The
-   input assembler cannot model this. It needs vertex pulling (a raw buffer
-   load in the recompiled shader for fetches whose index register is not
-   `r0.x`), or CPU-side de-instancing.
-2. **Rect lists** (primitive 8), drawn as triangle lists, so they lose half
+1. **Rect lists** (primitive 8), drawn as triangle lists, so they lose half
    their area; post passes use them.
-3. **MSAA and depth resolves.** The scene is 2x MSAA and environment passes
+2. **MSAA and depth resolves.** The scene is 2x MSAA and environment passes
    4x; depth resolves (flags `0x4`/`0x14`) are not modelled, which also
-   leaves shadow maps empty; a 1024x600 `k_24_8_FLOAT` texture (the scene's
-   depth resolve) is sampled and rejected.
-4. **Remaining textures:** linear volume textures (64x64x32 `k_8_8_8_8`), and
+   leaves shadow maps empty (the dark band on the road); a 1024x600
+   `k_24_8_FLOAT` texture (the scene's depth resolve) is sampled and rejected.
+3. **Remaining textures:** linear volume textures (64x64x32 `k_8_8_8_8`), and
    the 512x192 one that decodes as noise.
-5. **The garage preview is overexposed,** and the race's black sky region and
-   shadow band need checking against the xenos references once 1-3 are in.
-6. Not yet compared frame by frame with the xenos references; Vulkan
-   (`pgr3_vk.exe`) not yet run.
+4. **The garage preview is overexposed,** and the race needs checking against
+   the xenos references once 1-3 are in.
+5. Not yet compared frame by frame with the xenos references; the Vulkan exe
+   has had no validation-layer pass.
 
 ### Phase 6: Hardening and performance
 

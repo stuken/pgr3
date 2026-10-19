@@ -40,6 +40,9 @@
 
 REXCVAR_DEFINE_INT32(pgr3_trace_frame, 0, kCvarGroup,
                      "Log every draw and resolve of present frame N (0 = off)");
+REXCVAR_DEFINE_STRING(pgr3_debug_skip_vs, "", kCvarGroup,
+                      "Bring-up experiment: skip draws whose vertex shader hash "
+                      "(hex, as pgr3_trace_frame prints it) is in this comma list");
 
 REX_EXTERN(__imp__D3DDevice_BeginVertices);
 REX_EXTERN(__imp__D3DDevice_EndVertices);
@@ -331,6 +334,23 @@ bool DrawIndexedQuadList(const D3DDevice &dev, const DrawArgs &args, u32 quads) 
   return true;
 }
 
+// pgr3_debug_skip_vs names this draw's vertex shader.
+bool SkippedVertexShader(const pgr3::gpu::GuestShader *vs) {
+  const std::string &list = REXCVAR_GET(pgr3_debug_skip_vs);
+  if (list.empty() || !vs || !vs->shaderCacheEntry)
+    return false;
+  const std::string hash = std::format("{:016X}", vs->shaderCacheEntry->hash);
+  for (size_t pos = 0; pos < list.size();) {
+    size_t end = list.find(',', pos);
+    if (end == std::string::npos)
+      end = list.size();
+    if (list.compare(pos, end - pos, hash) == 0)
+      return true;
+    pos = end + 1;
+  }
+  return false;
+}
+
 void DispatchDraw(u32 device_guest, u32 primitive_type, const DrawArgs &args) {
   pgr3::gpu::perf::Scope timer(pgr3::gpu::perf::Counter::Draw);
   PGR3_CPU_ZONE("Draw");
@@ -372,6 +392,8 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const DrawArgs &args) {
   // per-frame command list is single-producer.
   auto &s = pgr3::gpu::state();
   std::unique_lock<std::mutex> lock(s.mutex);
+  if (SkippedVertexShader(s.vertex_shader))
+    return;
   Video::OpenCommandListLocked();
   Video::SetDirtyValue<plume::RenderPrimitiveTopology>(
       s.dirtyStates.pipelineState, s.pipelineState.primitiveTopology,
@@ -380,6 +402,9 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const DrawArgs &args) {
     g_stats.no_framebuffer.fetch_add(1, std::memory_order_relaxed);
     return;
   }
+  // Every host draw below passes this as its base or first vertex.
+  pgr3::gpu::SetVertexIndexBase(args.indexed ? args.baseVertexIndex
+                                             : static_cast<i32>(args.startVertex));
   if (!Video::FlushRenderStateLocked(device_guest)) {
     g_stats.no_state.fetch_add(1, std::memory_order_relaxed);
     return;
@@ -574,6 +599,7 @@ void FlushPendingUP() {
     g_stats.no_framebuffer.fetch_add(1, std::memory_order_relaxed);
     return;
   }
+  pgr3::gpu::SetVertexIndexBase(0);
   if (!Video::FlushRenderStateLocked(p.device) || !s.command_list) {
     g_stats.no_state.fetch_add(1, std::memory_order_relaxed);
     return;
