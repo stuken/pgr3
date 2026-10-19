@@ -81,7 +81,7 @@ foreach(shader IN ITEMS copy_vs imgui_vs)
 endforeach()
 foreach(shader IN ITEMS
         copy_color_ps copy_depth_ps debug_solid_ps fxaa_ps gamma_correction_ps
-        pfx_occlusion_count_ps imgui_ps)
+        pfx_occlusion_count_ps imgui_ps resolve_msaa_2x_ps resolve_msaa_4x_ps)
     pgr3_host_shader(${shader} ps_6_0)
 endforeach()
 

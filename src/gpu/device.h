@@ -353,6 +353,11 @@ struct VideoState {
   // pgr3_debug_solid_vs's stand-in pixel shader.
   std::unique_ptr<plume::RenderShader> debug_solid_ps;
   std::unique_ptr<plume::RenderShader> copy_depth_ps;
+  // Shader resolves of 2x and 4x surfaces ([0] 2x, [1] 4x), and their
+  // pipelines keyed by destination format and tier.
+  std::unique_ptr<plume::RenderShader> resolve_msaa_ps[2];
+  std::unordered_map<u64, std::unique_ptr<plume::RenderPipeline>>
+      resolve_msaa_pipelines;
 
   // Keyed by destination RT format (resolve destinations often differ from the
   // back buffer). Built on demand by ResolveRtToTexture.
@@ -525,6 +530,10 @@ plume::RenderPipeline *GetOrCreateCopyDepthPipeline(VideoState &s,
 plume::RenderPipeline *GetOrCreateResolvePipeline(VideoState &s,
                                                   plume::RenderFormat format,
                                                   bool fxaa = false);
+// The shader resolve of a 2x or 4x source into 'format' (resolve_msaa_ps).
+plume::RenderPipeline *
+GetOrCreateResolveMSAAPipeline(VideoState &s, plume::RenderFormat format,
+                               plume::RenderSampleCounts samples);
 bool DiagShouldLog(u64 site, const GuestTexture *t, u32 *n_out);
 void DestroyResourceNow(u32 guest_va, ResourceType type);
 void ParkTextureGPUObjects(GuestTexture *tex);

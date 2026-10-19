@@ -11,11 +11,13 @@
 #include <mutex>
 #include <unordered_map>
 
+#include <rex/cvar.h>
 #include <rex/hook.h>
 #include <rex/types.h>
 
 #include "core/logging.h"
 #include "core/memory_helpers.h"
+#include "core/settings.h" // kCvarGroup
 #include "gpu/d3d.h"
 #include "gpu/device.h"
 #include "gpu/format.h"
@@ -24,6 +26,11 @@
 #include "gpu/shaders/shader_constants.h"
 #include "gpu/surface_registry.h"
 #include "gpu/vertex_declaration.h"
+
+REXCVAR_DEFINE_BOOL(pgr3_msaa, true, kCvarGroup,
+                    "Render the guest's multisampled targets with the sample "
+                    "count it asks for (PGR3: the race scene 2x, the "
+                    "environment passes 4x)");
 
 REX_EXTERN(__imp__D3DDevice_SetRenderTarget);
 REX_EXTERN(__imp__D3DDevice_SetDepthStencilSurface);
@@ -75,6 +82,28 @@ bool GuestSurfaceDesc(PPCContext &ctx, u8 *base, u32 surface,
   return out.Width != 0 && out.Height != 0;
 }
 
+// D3DMULTISAMPLE_TYPE (RB_SURFACE_INFO's MSAA_SAMPLES): 0 none, 1 2x, 2 4x.
+// Colour and depth bound together carry the same type, so they pair.
+u32 SurfaceSampleCount(const SurfaceDesc &desc) {
+  if (!REXCVAR_GET(pgr3_msaa))
+    return 1;
+  const u32 samples = u32(desc.MultiSampleType) == 2   ? 4
+                      : u32(desc.MultiSampleType) == 1 ? 2
+                                                       : 1;
+  if (samples == 1)
+    return 1;
+  auto *device = pgr3::gpu::Video::HostDevice();
+  const plume::RenderFormat format = pgr3::gpu::ConvertGuestFormat(desc.Format);
+  if (!device || format == plume::RenderFormat::UNKNOWN ||
+      !(device->getSampleCountsSupported(format) &
+        static_cast<plume::RenderSampleCounts>(samples))) {
+    PGR3_WARN_FIRST(4, "{}x MSAA unsupported for guest format 0x{:08X}, "
+                   "rendering it at 1x", samples, u32(desc.Format));
+    return 1;
+  }
+  return samples;
+}
+
 GuestTexture *HostSurface(PPCContext &ctx, u8 *base, u32 surface) {
   if (!surface)
     return nullptr;
@@ -92,7 +121,8 @@ GuestTexture *HostSurface(PPCContext &ctx, u8 *base, u32 surface) {
   const u32 scale =
       pgr3::gpu::Output::SurfaceScale(u32(desc.Width), u32(desc.Height));
   GuestTexture *host = pgr3::gpu::SurfaceRegistry::Get(
-      u32(desc.Width) * scale, u32(desc.Height) * scale, desc.Format, 1);
+      u32(desc.Width) * scale, u32(desc.Height) * scale, desc.Format,
+      SurfaceSampleCount(desc));
   if (host)
     host->hostScale = scale;
   std::lock_guard lock(g_mutex);
@@ -179,10 +209,11 @@ REX_HOOK_RAW(D3DDevice_SetRenderTarget) {
     if (surface_va)
       GuestSurfaceDesc(ctx, base, surface_va, desc);
     PGR3_INFO("[trace] SetRenderTarget 0x{:08X} -> {}x{} guest fmt=0x{:08X} "
-             "host fmt={} lr=0x{:08X}",
+             "host fmt={} samples={} lr=0x{:08X}",
              surface_va, surface ? surface->width : 0,
              surface ? surface->height : 0, u32(desc.Format),
-             surface ? static_cast<int>(surface->format) : -1, u32(ctx.lr));
+             surface ? static_cast<int>(surface->format) : -1,
+             surface ? u32(surface->sampleCount) : 0, u32(ctx.lr));
   }
   auto &s = pgr3::gpu::state();
   if (s.render_target != surface)

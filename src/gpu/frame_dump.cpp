@@ -75,7 +75,8 @@ bool WriteBmp(const std::filesystem::path &path, u32 width, u32 height,
 
 bool DumpTexture(VideoState &s, GuestTexture *rt,
                  const std::filesystem::path &path) {
-  if (!rt || !rt->texture)
+  // A multisampled texture cannot be copied to a buffer.
+  if (!rt || !rt->texture || rt->sampleCount != plume::RenderSampleCount::COUNT_1)
     return false;
   const u32 width = rt->width, height = rt->height;
   u32 bpp = 0;

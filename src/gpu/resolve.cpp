@@ -15,6 +15,7 @@
 #include <cmath>
 #include <memory>
 #include <mutex>
+#include <unordered_map>
 #include <vector>
 
 #include <plume_render_interface.h>
@@ -76,6 +77,58 @@ void DetachSourceSurfaceLocked(VideoState &s, GuestTexture *texture) {
   texture->sourceSurface = nullptr;
 }
 
+namespace {
+
+// A single-sample copy of a multisampled colour surface, made by the hardware
+// resolve (the average of each pixel's samples, as a Xenos colour resolve
+// gives), so every single-sample copy path below can take it as its source.
+// One scratch texture per size and format, reused by later resolves.
+GuestTexture *ResolvedSingleSampleLocked(VideoState &s, GuestTexture *src) {
+  static std::unordered_map<u64, std::unique_ptr<GuestTexture>> s_scratch;
+  const u64 key = u64(src->width) | (u64(src->height) << 16) |
+                  (u64(static_cast<u32>(src->format)) << 32);
+  auto &slot = s_scratch[key];
+  if (!slot) {
+    auto tex = std::make_unique<GuestTexture>();
+    plume::RenderTextureDesc desc;
+    desc.dimension = plume::RenderTextureDimension::TEXTURE_2D;
+    desc.width = src->width;
+    desc.height = src->height;
+    desc.depth = 1;
+    desc.mipLevels = 1;
+    desc.arraySize = 1;
+    desc.format = src->format;
+    desc.flags = plume::RenderTextureFlag::RENDER_TARGET;
+    tex->textureHolder = CreateHostTexture(s.device.get(), desc, "msaa-resolve");
+    tex->texture = tex->textureHolder.get();
+    if (!tex->texture)
+      return nullptr;
+    tex->width = src->width;
+    tex->height = src->height;
+    tex->format = src->format;
+    tex->viewDimension = plume::RenderTextureViewDimension::TEXTURE_2D;
+    slot = std::move(tex);
+  }
+  GuestTexture *tex = slot.get();
+  tex->guestFormat = src->guestFormat;
+  tex->hostScale = src->hostScale;
+  if (tex->descriptorIndex == kInvalidDescriptorIndex)
+    BindTextureSRVLocked(s, tex);
+  plume::RenderTextureBarrier pre[2] = {
+      plume::RenderTextureBarrier(src->texture,
+                                  plume::RenderTextureLayout::RESOLVE_SOURCE),
+      plume::RenderTextureBarrier(tex->texture,
+                                  plume::RenderTextureLayout::RESOLVE_DEST),
+  };
+  s.command_list->barriers(plume::RenderBarrierStage::COPY, pre, std::size(pre));
+  src->layout = plume::RenderTextureLayout::RESOLVE_SOURCE;
+  tex->layout = plume::RenderTextureLayout::RESOLVE_DEST;
+  s.command_list->resolveTexture(tex->texture, src->texture);
+  return tex;
+}
+
+} // namespace
+
 bool CopySurfaceToTextureLocked(VideoState &s, GuestTexture *src,
                                 GuestTexture *dst, const char *reason,
                                 CopyFilter filter) {
@@ -99,6 +152,15 @@ bool CopySurfaceToTextureLocked(VideoState &s, GuestTexture *src,
     return false;
 
   s.draw_framebuffer_bound = false;
+
+  // A multisampled colour source resolves to one sample first. A depth one
+  // takes resolve_msaa_ps's sample-0 path below.
+  if (src->sampleCount != plume::RenderSampleCount::COUNT_1 &&
+      !IsDepthFormat(src->format)) {
+    src = ResolvedSingleSampleLocked(s, src);
+    if (!src)
+      return false;
+  }
 
   const bool dims_match =
       src->width == dst->width && src->height == dst->height;
@@ -223,14 +285,15 @@ bool CopySurfaceToTextureLocked(VideoState &s, GuestTexture *src,
     s.command_list->setScissors(plume::RenderRect(
         0, 0, static_cast<i32>(dst->width), static_cast<i32>(dst->height)));
     plume::RenderPipeline *pipeline = nullptr;
-    if (src->sampleCount != plume::RenderSampleCount::COUNT_1) {
-      // RR6 requests no MSAA, so every surface is single-sampled and there is
-      // no multisample resolve to run.
-      PGR3_WARN_FIRST(4, "{}: multisampled source {}x{} not resolvable", reason,
-                     src->width, src->height);
+    const bool msaa_src = src->sampleCount != plume::RenderSampleCount::COUNT_1;
+    if (msaa_src && depth_dst) {
+      PGR3_WARN_FIRST(4, "{}: multisampled depth {}x{} into a depth target is "
+                     "not modelled", reason, src->width, src->height);
       return false;
     }
-    if (depth_dst) {
+    if (msaa_src) {
+      pipeline = GetOrCreateResolveMSAAPipeline(s, dst->format, src->sampleCount);
+    } else if (depth_dst) {
       pipeline = GetOrCreateCopyDepthPipeline(s, dst->format);
     } else {
       pipeline = GetOrCreateResolvePipeline(s, dst->format,
@@ -261,7 +324,10 @@ bool CopySurfaceToTextureLocked(VideoState &s, GuestTexture *src,
       u32 resourceDescriptorIndex2;
       float param0;
       float param1;
-    } push{descriptor_index, 0u, depth_dst ? 1.0f : resolve_scale,
+    } push{descriptor_index,
+           // resolve_msaa_ps: bit 1 takes sample 0 of a depth source.
+           msaa_src && IsDepthFormat(src->format) ? 2u : 0u,
+           depth_dst ? 1.0f : resolve_scale,
            // copy_color_ps: a negative Param1 selects the B-spline upscale.
            filter == CopyFilter::SmoothUpscale && !depth_dst
                ? -1.0f
@@ -427,6 +493,17 @@ namespace {
 bool CopySurfaceRegionLocked(VideoState &s, GuestTexture *src, GuestTexture *dst,
                              const plume::RenderRect *src_rect, u32 dst_x,
                              u32 dst_y) {
+  // A multisampled colour source resolves to one sample first.
+  if (src->sampleCount != plume::RenderSampleCount::COUNT_1 &&
+      !IsDepthFormat(src->format) && src->format == dst->format &&
+      dst->sampleCount == plume::RenderSampleCount::COUNT_1) {
+    BeginCommandList(s);
+    if (!s.command_list_open)
+      return false;
+    src = ResolvedSingleSampleLocked(s, src);
+    if (!src)
+      return false;
+  }
   if (src->format != dst->format || dst->resolveScale != 1.0f ||
       src->hostScale != dst->hostScale ||
       src->sampleCount != plume::RenderSampleCount::COUNT_1 ||

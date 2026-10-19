@@ -16,7 +16,7 @@ than repeating it. SDK: rexglue 0.10.0.
 | 2. XenosRecomp | **Done.** All 309 shaders compile to DXIL and SPIR-V with `REBLUE_RECOMP PGR3_RECOMP`, on branch `pgr3` of the fork in `thirdparty/XenosRecomp` (uncommitted). RR6's 176 still compile, and their HLSL changes only as intended. See Phase 2 findings. |
 | 3. Build integration | **Done.** Both configurations build. Every build makes the shader cache; `PGR3_NATIVE_GPU=ON` builds `pgr3.exe` (D3D12) and `pgr3_vk.exe` (Vulkan) on plume with the cache and 548 prelinked variants. Until Phase 5 they log that the renderer is missing and exit. |
 | 4. D3D identification (XDK 2099) | **Done.** `config/d3d.toml` names 74 functions, including `BeginTiling`/`EndTiling` and `XPhysicalAlloc`/`Free`. `src/gpu/d3d.h` has the 2099 device and resource layouts, every field checked against PGR3's code. The render setup is confirmed: 1024x600, 2x MSAA, 7e3. See Phase 4 findings. |
-| 5. Native renderer bring-up | **In progress.** rr6's renderer is ported and runs PGR3 on D3D12 and Vulkan from boot through the front end, garage and menus into a London race. The race now has its full scenery: trees, crowd, fences, lane markings and textured buildings. Instanced fetches are pulled in the shader. Rect lists are expanded to quads. Depth resolves feed the shadow maps. Constants the game writes into the ring, and the bool constants, reach the host. Open: MSAA, post effects, some texture formats. See Phase 5 progress. |
+| 5. Native renderer bring-up | **In progress.** rr6's renderer is ported and runs PGR3 on D3D12 and Vulkan from boot through the front end, garage and menus into a London race. The race now has its full scenery: trees, crowd, fences, lane markings and textured buildings. Instanced fetches are pulled in the shader. Rect lists are expanded to quads. Depth resolves feed the shadow maps. Constants the game writes into the ring, and the bool constants, reach the host. MSAA is modelled (2x scene, 4x environment). Open: other cities and modes against xenos. See Phase 5 progress. |
 | 6. Hardening and performance | Not started. |
 | 7. Geometry Wars (`gw.xex`) | Out of scope until 5 is done. |
 
@@ -761,14 +761,25 @@ Also settled in the comparison:
 - **The garage preview** matches xenos now, and the bloom target is as dark as
   xenos's in daylight (means under 2/255 in both), so neither is a fault.
 
+**MSAA.** Surfaces take the sample count `D3DSurface_GetDesc` reports
+(`MultiSampleType` 1 is 2x, 2 is 4x; `pgr3_msaa`, on by default, falls back to
+1x where the host lacks the count). In a race: the scene 2x, the environment
+passes and the minimap 4x, the post chain 1x. Resolves:
+- a colour source goes through a hardware resolve (the sample average) into a
+  single-sample scratch texture per size and format, which then feeds the
+  existing 1x copies: whole, partial rect, into a cube face, or converted;
+- a depth source (the 2x scene depth into its `R32_FLOAT` texture) goes through
+  `resolve_msaa_ps`, which reads `Texture2DMS` and takes sample 0.
+
+Alpha to coverage now has the samples to work with on the foliage. Checked on
+D3D12 and Vulkan through the menus, garage and race.
+
 **Open, in rough order of what is visible in a race:**
-1. **MSAA.** The scene is 2x MSAA and the environment passes 4x; the host
-   renders everything at 1x. Alpha to coverage then has one sample, so the
-   foliage edges are hard.
-2. **The other cities and night races,** replays and movies, against xenos.
+1. **The other cities and night races,** replays and movies, against xenos.
    These need menu scripts.
-3. The title screen's logo rings are dimmer than on xenos.
-4. The Vulkan exe has had no validation-layer pass.
+2. The title screen's logo rings are dimmer than on xenos.
+3. The Vulkan exe has had no validation-layer pass.
+4. Resolution scaling with MSAA (Phase 6).
 
 ### Phase 6: Hardening and performance
 

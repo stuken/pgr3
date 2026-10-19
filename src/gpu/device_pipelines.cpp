@@ -28,6 +28,8 @@
 #include "src/gpu/shaders/hlsl/copy_vs.hlsl.dxil.h"
 #include "src/gpu/shaders/hlsl/gamma_correction_ps.hlsl.dxil.h"
 #include "src/gpu/shaders/hlsl/pfx_occlusion_count_ps.hlsl.dxil.h"
+#include "src/gpu/shaders/hlsl/resolve_msaa_2x_ps.hlsl.dxil.h"
+#include "src/gpu/shaders/hlsl/resolve_msaa_4x_ps.hlsl.dxil.h"
 #else
 #include "src/gpu/shaders/hlsl/copy_color_ps.hlsl.spirv.h"
 #include "src/gpu/shaders/hlsl/fxaa_ps.hlsl.spirv.h"
@@ -36,6 +38,8 @@
 #include "src/gpu/shaders/hlsl/copy_vs.hlsl.spirv.h"
 #include "src/gpu/shaders/hlsl/gamma_correction_ps.hlsl.spirv.h"
 #include "src/gpu/shaders/hlsl/pfx_occlusion_count_ps.hlsl.spirv.h"
+#include "src/gpu/shaders/hlsl/resolve_msaa_2x_ps.hlsl.spirv.h"
+#include "src/gpu/shaders/hlsl/resolve_msaa_4x_ps.hlsl.spirv.h"
 #endif
 
 namespace pgr3::gpu {
@@ -256,8 +260,13 @@ bool BuildCopyPipeline(VideoState &s) {
       PGR3_SHADER_BLOB(pfx_occlusion_count_ps), "main", kHostShaderFormat);
   s.fxaa_ps = s.device->createShader(PGR3_SHADER_BLOB(fxaa_ps), "main",
                                      kHostShaderFormat);
+  s.resolve_msaa_ps[0] = s.device->createShader(
+      PGR3_SHADER_BLOB(resolve_msaa_2x_ps), "main", kHostShaderFormat);
+  s.resolve_msaa_ps[1] = s.device->createShader(
+      PGR3_SHADER_BLOB(resolve_msaa_4x_ps), "main", kHostShaderFormat);
   if (!s.copy_vs || !s.copy_color_ps || !s.copy_depth_ps ||
-      !s.gamma_correction_ps || !s.occlusion_count_ps || !s.fxaa_ps) {
+      !s.gamma_correction_ps || !s.occlusion_count_ps || !s.fxaa_ps ||
+      !s.resolve_msaa_ps[0] || !s.resolve_msaa_ps[1]) {
     PGR3_ERROR("Plume createShader for copy helpers failed");
     return false;
   }
@@ -356,6 +365,38 @@ plume::RenderPipeline *GetOrCreateResolvePipeline(VideoState &s,
     return nullptr;
   auto *raw = pipeline.get();
   pipelines.emplace(format, std::move(pipeline));
+  return raw;
+}
+
+plume::RenderPipeline *
+GetOrCreateResolveMSAAPipeline(VideoState &s, plume::RenderFormat format,
+                               plume::RenderSampleCounts samples) {
+  const u32 tier = samples == plume::RenderSampleCount::COUNT_4 ? 1u : 0u;
+  if (samples != plume::RenderSampleCount::COUNT_2 &&
+      samples != plume::RenderSampleCount::COUNT_4)
+    return nullptr;
+  const u64 key = (u64(format) << 8) | tier;
+  auto it = s.resolve_msaa_pipelines.find(key);
+  if (it != s.resolve_msaa_pipelines.end())
+    return it->second.get();
+  plume::RenderGraphicsPipelineDesc desc;
+  desc.pipelineLayout = s.pipeline_layout.get();
+  desc.vertexShader = s.copy_vs.get();
+  desc.pixelShader = s.resolve_msaa_ps[tier].get();
+  desc.depthFunction = plume::RenderComparisonFunction::ALWAYS;
+  desc.depthEnabled = false;
+  desc.depthWriteEnabled = false;
+  desc.primitiveTopology = plume::RenderPrimitiveTopology::TRIANGLE_LIST;
+  desc.cullMode = plume::RenderCullMode::NONE;
+  desc.renderTargetCount = 1;
+  desc.renderTargetFormat[0] = format;
+  desc.renderTargetBlend[0] = plume::RenderBlendDesc::Copy();
+  desc.depthTargetFormat = plume::RenderFormat::UNKNOWN;
+  auto pipeline = CreateHostGraphicsPipeline(s.device.get(), desc, "resolve-msaa");
+  if (!pipeline)
+    return nullptr;
+  auto *raw = pipeline.get();
+  s.resolve_msaa_pipelines.emplace(key, std::move(pipeline));
   return raw;
 }
 
