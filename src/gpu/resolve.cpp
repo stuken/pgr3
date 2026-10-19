@@ -592,7 +592,9 @@ bool CopySurfaceRegionLocked(VideoState &s, GuestTexture *src, GuestTexture *dst
     if (!src)
       return false;
   }
-  if (src->format != dst->format && !IsDepthFormat(src->format))
+  // A format change (a 7e3 scene into an 8-bit texture, depth into R32_FLOAT)
+  // runs the copy shader; a straight copy needs matching formats.
+  if (src->format != dst->format)
     return ShaderCopyRegionLocked(s, src, dst, src_rect, dst_x, dst_y);
   if (src->format != dst->format || dst->resolveScale != 1.0f ||
       src->hostScale != dst->hostScale ||
@@ -675,6 +677,19 @@ void Video::ResolveRtToTexture(GuestTexture *dst,
 
   // A sub-rectangle (or an offset destination) that is not simply the whole
   // surface onto the whole texture.
+  // A whole-surface resolve from a surface larger than the destination copies
+  // 1:1 and clips on Xenos, so it takes the destination-sized corner. PGR3's
+  // shadow depth surface grows to cover the larger targets it is also bound
+  // with, and scaling the whole of it shrank each car's shadow map into a
+  // corner.
+  plume::RenderRect corner;
+  if (!src_rect && dst_x == 0 && dst_y == 0 && src->hostScale == dst->hostScale &&
+      (src->width > dst->width || src->height > dst->height) &&
+      dst->viewDimension != plume::RenderTextureViewDimension::TEXTURE_CUBE) {
+    corner = {0, 0, i32(std::min(src->width, dst->width)),
+              i32(std::min(src->height, dst->height))};
+    src_rect = &corner;
+  }
   const bool partial =
       (src_rect && (src_rect->left != 0 || src_rect->top != 0 ||
                     u32(src_rect->right) != src->width ||

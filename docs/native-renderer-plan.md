@@ -838,6 +838,19 @@ Draws now cost 6-7 ms a frame (geometry 3 ms), and the race holds 60 fps
 with 4-5 ms of the frame spent in the pacing sleep. No pipeline builds happen
 mid-race once the course has loaded.
 
+**AI car shadows (fixed).** The cars' shadow maps are 512x512 and 256x256
+depth resolves with no source rect, out of a shadow depth surface the host had
+grown (`GrowDepthToCoverTarget`) to cover the 1024x600 and 1280x720 targets it
+is also bound with. Xenos copies a whole-surface resolve 1:1 and clips it to
+the destination; the host scaled the whole surface down, so each map held a
+small car in its corner and the projected shadows came out as dark boxes
+beside the AI cars. A whole-surface resolve from a larger surface at the same
+host scale now copies the destination-sized corner, and region copies take
+the shader path for single-sample depth into `R32_FLOAT`.
+
+**Resolution scale at 3x.** Menus, garage, the countdown and a race at 3x
+match 1x when scaled down; no pass-level problems showed at that size.
+
 ### Phase 7: Geometry Wars (`gw.xex`)
 
 `gw.xex` links its own D3D, so with `config.graphics = nullptr` it would get no
