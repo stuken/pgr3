@@ -779,7 +779,9 @@ D3D12 and Vulkan through the menus, garage and race.
    These need menu scripts.
 2. The title screen's logo rings are dimmer than on xenos.
 3. The Vulkan exe has had no validation-layer pass.
-4. Resolution scaling with MSAA (Phase 6).
+
+The default resolution scale (2x, a 2048x1200 scene) runs with MSAA on and
+looks right in a race; the per-pass checks at 2x and 3x are Phase 6 work.
 
 ### Phase 6: Hardening and performance
 
