@@ -652,8 +652,8 @@ plume::RenderFormat ResolveTargetHostFormat(u32 guest_va,
   return src_format;
 }
 
-GuestTexture *GetOrCreateResolveTarget(u32 guest_va,
-                                       plume::RenderFormat format) {
+GuestTexture *GetOrCreateResolveTarget(u32 guest_va, plume::RenderFormat format,
+                                       u32 scale_override) {
   if (!guest_va || format == plume::RenderFormat::UNKNOWN)
     return nullptr;
   xe::xe_gpu_texture_fetch_t fetch;
@@ -663,7 +663,9 @@ GuestTexture *GetOrCreateResolveTarget(u32 guest_va,
   // Resolves copy host surfaces, which are the guest size times their scale,
   // so the destination is scaled the same way. Shaders sample it by
   // normalized coordinates and never see the difference.
-  const u32 scale = Output::SurfaceScale(FetchWidth(fetch), FetchHeight(fetch));
+  const u32 scale = scale_override
+                        ? scale_override
+                        : Output::SurfaceScale(FetchWidth(fetch), FetchHeight(fetch));
   const u32 width = FetchWidth(fetch) * scale;
   const u32 height = FetchHeight(fetch) * scale;
   if (!width || !height)

@@ -880,6 +880,15 @@ scenery's fog distance, taken in world space, saturated. Payloads are now
 applied at the next Set*ShaderConstantF or BeginShaderConstantF4 as well, in
 command order.
 
+**Shadow resolution (`pgr3_shadow_scale`, default 2).** The car shadows are
+depth-only passes into a 512x512 (player) or 256x256 (AI) D24FS8 surface,
+each resolved into that car's shadow map. Those surfaces (square, 256 or 512,
+single-sampled) now render at the resolution scale times `pgr3_shadow_scale`,
+and a depth resolve's target takes its source's scale, so the corner copy
+stays 1:1. A depth-only pass already takes its viewport scale from the depth
+surface. At the default render scale of 2 the player's map is 2048x2048;
+the shadow edges lose their stair-steps, and race frame times are unchanged.
+
 **Optional extras.**
 - **FXAA (`pgr3_fxaa`, off by default).** rr6 filtered the input of RR6's
   grading pass. PGR3's last 3D pass is the final composite (`ps_8200E300`:

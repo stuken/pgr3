@@ -118,8 +118,13 @@ GuestTexture *HostSurface(PPCContext &ctx, u8 *base, u32 surface) {
   if (!GuestSurfaceDesc(ctx, base, surface, desc))
     return nullptr;
   // The host surface is the guest size times its scale.
-  const u32 scale =
+  u32 scale =
       pgr3::gpu::Output::SurfaceScale(u32(desc.Width), u32(desc.Height));
+  // Car shadow surfaces render finer than the scene (pgr3_shadow_scale).
+  if (pgr3::gpu::IsDepthFormat(pgr3::gpu::ConvertGuestFormat(desc.Format)) &&
+      pgr3::gpu::Output::IsShadowSurface(u32(desc.Width), u32(desc.Height),
+                                         u32(desc.MultiSampleType)))
+    scale *= pgr3::gpu::Output::ShadowScale();
   GuestTexture *host = pgr3::gpu::SurfaceRegistry::Get(
       u32(desc.Width) * scale, u32(desc.Height) * scale, desc.Format,
       SurfaceSampleCount(desc));

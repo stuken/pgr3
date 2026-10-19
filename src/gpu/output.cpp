@@ -26,6 +26,11 @@
 REXCVAR_DEFINE_INT32(pgr3_resolution_scale, 0, kCvarGroup,
                      "Integer render resolution scale over the guest's 1280x720 "
                      "(0 = from the output height, 1 = native)");
+REXCVAR_DEFINE_INT32(pgr3_shadow_scale, 2, kCvarGroup,
+                     "Car shadow map resolution, as a multiple of the render "
+                     "resolution scale (1 = the console's 512x512 and 256x256, "
+                     "up to 4). Takes effect after a restart.")
+    .range(1, 4);
 
 namespace pgr3::gpu {
 
@@ -133,6 +138,22 @@ u32 Output::SurfaceScale(u32 guest_width, u32 guest_height) {
   if (guest_width == kGlowWidth && guest_height == kGlowHeight)
     return 1;
   return ResolutionScale();
+}
+
+u32 Output::ShadowScale() {
+  static const u32 scale =
+      u32(std::clamp(REXCVAR_GET(pgr3_shadow_scale), 1, 4));
+  return scale;
+}
+
+// The player's shadow surface is 512x512 and the AI cars' 256x256 (D24FS8,
+// no MSAA). The game renders each car's depth into a corner of one and
+// resolves it into that car's shadow map; the environment passes' 256x256
+// depth is 4x multisampled and so not matched.
+bool Output::IsShadowSurface(u32 guest_width, u32 guest_height,
+                             u32 multisample_type) {
+  return multisample_type == 0 && guest_width == guest_height &&
+         (guest_width == 256 || guest_width == 512);
 }
 
 double Output::RenderAspect() {

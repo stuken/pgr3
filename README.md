@@ -159,6 +159,7 @@ Next to the executable, pgr3 uses:
 |---|---|---|
 | `pgr3_resolution_scale` | `0` | Integer render scale over the game's 1280x720 canvas. `0` picks one from the output height, `1` is native. |
 | `pgr3_supersampling` | `1` | `2` renders at twice the resolution scale and downsamples at present. Restart to apply. |
+| `pgr3_shadow_scale` | `2` | Car shadow map resolution as a multiple of the render scale (`1` is the console's 512x512 and 256x256, up to `4`). Restart to apply. |
 | `pgr3_msaa` | `true` | Render the game's multisampled targets at the sample count it asks for. |
 | `pgr3_fxaa` | `false` | FXAA on the tone-mapped scene, before the HUD is drawn. |
 | `pgr3_anisotropy` | `default` | `2`, `4`, `8` or `16` forces that anisotropic filtering level on every linearly filtered sampler. |

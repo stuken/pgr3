@@ -1017,7 +1017,10 @@ void ResolveNative(const ResolveArgs &a) {
     const plume::RenderFormat format =
         depth ? plume::RenderFormat::R32_FLOAT
               : pgr3::gpu::ResolveTargetHostFormat(dest, src->format);
-    if (auto *dst = pgr3::gpu::GetOrCreateResolveTarget(dest, format)) {
+    // A depth resolve keeps its source's scale: the car shadow maps are
+    // corners of shadow surfaces that render at pgr3_shadow_scale.
+    if (auto *dst = pgr3::gpu::GetOrCreateResolveTarget(
+            dest, format, depth ? src->hostScale : 0u)) {
       Video::TrackResolveSource(flags, dst, level, face);
       // D3DRECT {x1,y1,x2,y2} in surface pixels and D3DPOINT {x,y}.
       plume::RenderRect rect;

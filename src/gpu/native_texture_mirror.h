@@ -45,8 +45,10 @@ plume::RenderFormat ResolveTargetHostFormat(u32 guest_va,
 
 // RR6: the host texture D3DDevice_Resolve writes for a guest texture, created
 // (or recreated) at the fetch constant's size in 'format'.
-GuestTexture *GetOrCreateResolveTarget(u32 guest_va,
-                                       plume::RenderFormat format);
+// 'scale', when not 0, overrides the host scale (a depth resolve takes its
+// source surface's, so a shadow map matches its shadow surface).
+GuestTexture *GetOrCreateResolveTarget(u32 guest_va, plume::RenderFormat format,
+                                       u32 scale = 0);
 
 // RR6: forgets everything mirrored for a destroyed guest texture
 // (D3DResource_Destroy): its texel mirror, its resolve target and its cached

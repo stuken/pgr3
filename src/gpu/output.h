@@ -47,6 +47,13 @@ public:
   // texel, so a scaled buffer leaves gaps between the taps and the glow
   // breaks into bands. Every 320x180 target RR6 binds is that glow chain.
   static u32 SurfaceScale(u32 guest_width, u32 guest_height);
+  // pgr3_shadow_scale: the extra factor the car shadow depth surfaces (and the
+  // shadow maps resolved out of them) render at, over SurfaceScale.
+  static u32 ShadowScale();
+  // Whether a depth surface is one of PGR3's car shadow surfaces: square,
+  // 256 or 512 on a side, single-sampled.
+  static bool IsShadowSurface(u32 guest_width, u32 guest_height,
+                              u32 multisample_type);
 
   // The render rect's own ratio: 16:9, give or take the multiple-of-8
   // rounding of the fit.
