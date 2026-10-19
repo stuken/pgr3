@@ -851,6 +851,17 @@ the shader path for single-sample depth into `R32_FLOAT`.
 **Resolution scale at 3x.** Menus, garage, the countdown and a race at 3x
 match 1x when scaled down; no pass-level problems showed at that size.
 
+**Pipeline precache.** `cache/pipeline_state_cache.h` lists 368 pipelines,
+captured with `pgr3_pso_capture` over a London career race, the Las Vegas
+night race and a manual run across every track. They compile on background
+threads as their shaders and declarations appear; a London race then
+compiles none on the drawing thread. On this machine the driver cache made
+drawing-thread builds cheap (0.2-0.5 ms) anyway; the list is for first runs
+and after driver updates, when a build costs 10-20 ms.
+
+**Vulkan validation:** not yet run; the machine has no Vulkan SDK (and so no
+`VK_LAYER_KHRONOS_validation`).
+
 ### Phase 7: Geometry Wars (`gw.xex`)
 
 `gw.xex` links its own D3D, so with `config.graphics = nullptr` it would get no
