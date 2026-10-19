@@ -82,6 +82,7 @@ bool DumpTexture(VideoState &s, GuestTexture *rt,
   switch (rt->format) {
   case plume::RenderFormat::B8G8R8A8_UNORM:
   case plume::RenderFormat::R8G8B8A8_UNORM:
+  case plume::RenderFormat::R32_FLOAT: // depth resolves, as grey
     bpp = 4;
     break;
   case plume::RenderFormat::R16G16B16A16_FLOAT:
@@ -144,6 +145,11 @@ bool DumpTexture(VideoState &s, GuestTexture *rt,
         out[1] = ToByte(HalfToFloat(h[1]));
         out[2] = ToByte(HalfToFloat(h[0]));
         out[3] = ToByte(HalfToFloat(h[3]));
+      } else if (rt->format == plume::RenderFormat::R32_FLOAT) {
+        float v;
+        std::memcpy(&v, row + x * 4, 4);
+        out[0] = out[1] = out[2] = ToByte(v);
+        out[3] = 255;
       } else if (rt->format == plume::RenderFormat::R8G8B8A8_UNORM) {
         out[0] = row[x * 4 + 2];
         out[1] = row[x * 4 + 1];

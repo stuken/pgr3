@@ -743,7 +743,9 @@ REX_HOOK_RAW(D3DDevice_DrawVerticesUP) {
 // clears the resolved target's color from pClearColor (four floats),
 // D3DRESOLVE_CLEARDEPTHSTENCIL (0x200) depth from f1 and stencil from the
 // caller's stack at r1+92 (0x823CEF68 reads 508(r1) under a 416-byte frame).
-// Depth resolves are not modeled yet, as in reblue.
+// A depth resolve (D3DRESOLVE_DEPTHSTENCIL) copies the depth surface into an
+// R32_FLOAT texture: PGR3 samples the scene depth and its shadow maps as
+// k_24_8_FLOAT, which fetches the depth into .x.
 constexpr u32 kResolveClearRenderTarget = 0x100;
 constexpr u32 kResolveClearDepthStencil = 0x200;
 
@@ -780,7 +782,9 @@ void ResolveNative(const ResolveArgs &a) {
   const double clear_z = a.clear_z;
   const u32 clear_stencil = a.clear_stencil;
 
-  pgr3::gpu::GuestTexture *src = pgr3::gpu::state().render_target;
+  const bool depth = (flags & pgr3::gpu::kResolveDepthStencil) != 0;
+  pgr3::gpu::GuestTexture *src = depth ? pgr3::gpu::state().depth_stencil
+                                       : pgr3::gpu::state().render_target;
   if (TracingThisFrame()) {
     // D3DRECT {x1,y1,x2,y2}, D3DPOINT {x,y}; the surface words carry the
     // EDRAM base and pitch the guest resolves from.
@@ -799,17 +803,15 @@ void ResolveNative(const ResolveArgs &a) {
              flags, dest, src ? src->width : 0, src ? src->height : 0, rect,
              point, surface_va, words, a.lr);
   }
-  if (dest && (flags & pgr3::gpu::kResolveDepthStencil))
-    PGR3_WARN_FIRST(4, "Resolve: depth resolve into 0x{:08X} not modeled "
-                   "(flags=0x{:X})", dest, flags);
   // The guest clears only the resolved rect; the host clears the whole target.
   if (a.rect_va &&
       (flags & (kResolveClearRenderTarget | kResolveClearDepthStencil)))
     PGR3_WARN_FIRST(4, "Resolve: clear limited to a source rect clears the "
                    "whole target (flags=0x{:X})", flags);
-  if (dest && !(flags & pgr3::gpu::kResolveDepthStencil) && src &&
-      src->texture) {
-    if (auto *dst = pgr3::gpu::GetOrCreateResolveTarget(dest, src->format)) {
+  if (dest && src && src->texture) {
+    const plume::RenderFormat format =
+        depth ? plume::RenderFormat::R32_FLOAT : src->format;
+    if (auto *dst = pgr3::gpu::GetOrCreateResolveTarget(dest, format)) {
       Video::TrackResolveSource(flags, dst, level, face);
       // D3DRECT {x1,y1,x2,y2} in surface pixels and D3DPOINT {x,y}.
       plume::RenderRect rect;

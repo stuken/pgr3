@@ -277,6 +277,8 @@ bool IsRenderTargetCapable(plume::RenderFormat format) {
   case plume::RenderFormat::R16G16B16A16_UNORM:
   case plume::RenderFormat::R32G32B32A32_FLOAT:
   case plume::RenderFormat::R11G11B10_FLOAT:
+  // Depth resolves land here (D3DDevice_Resolve with D3DRESOLVE_DEPTHSTENCIL).
+  case plume::RenderFormat::R32_FLOAT:
     return true;
   default:
     return false;

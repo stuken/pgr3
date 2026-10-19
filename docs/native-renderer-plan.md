@@ -16,7 +16,7 @@ than repeating it. SDK: rexglue 0.10.0.
 | 2. XenosRecomp | **Done.** All 309 shaders compile to DXIL and SPIR-V with `REBLUE_RECOMP PGR3_RECOMP`, on branch `pgr3` of the fork in `thirdparty/XenosRecomp` (uncommitted). RR6's 176 still compile, and their HLSL changes only as intended. See Phase 2 findings. |
 | 3. Build integration | **Done.** Both configurations build. Every build makes the shader cache; `PGR3_NATIVE_GPU=ON` builds `pgr3.exe` (D3D12) and `pgr3_vk.exe` (Vulkan) on plume with the cache and 548 prelinked variants. Until Phase 5 they log that the renderer is missing and exit. |
 | 4. D3D identification (XDK 2099) | **Done.** `config/d3d.toml` names 74 functions, including `BeginTiling`/`EndTiling` and `XPhysicalAlloc`/`Free`. `src/gpu/d3d.h` has the 2099 device and resource layouts, every field checked against PGR3's code. The render setup is confirmed: 1024x600, 2x MSAA, 7e3. See Phase 4 findings. |
-| 5. Native renderer bring-up | **In progress.** rr6's renderer is ported and runs PGR3 on D3D12 from boot through the front end, garage and menus into a London race: course, buildings and cars render, with the HUD. Instanced fetches are pulled in the shader. Rect lists are expanded to quads. Open: MSAA and depth resolves, shadows, post effects, some texture formats. See Phase 5 progress. |
+| 5. Native renderer bring-up | **In progress.** rr6's renderer is ported and runs PGR3 on D3D12 from boot through the front end, garage and menus into a London race: course, buildings and cars render, with the HUD. Instanced fetches are pulled in the shader. Rect lists are expanded to quads. Depth resolves feed the shadow maps. Open: MSAA, post effects, some texture formats. See Phase 5 progress. |
 | 6. Hardening and performance | Not started. |
 | 7. Geometry Wars (`gw.xex`) | Out of scope until 5 is done. |
 
@@ -657,11 +657,20 @@ two 3-vertex full-screen passes per race frame, with the viewport transform off.
   takes the quad-list path. Before this, both passes covered only half their
   target.
 
+**Depth resolves** (`D3DRESOLVE_DEPTHSTENCIL`, flags `0x4`/`0x14`) now copy
+the depth surface into an `R32_FLOAT` resolve target through the colour-copy
+shader. The depth surface is the SRV source: plume views `D32S8`/`D24S8` as
+their depth plane.
+- **What reads them:** the shaders sample them as `k_24_8_FLOAT`, depth in
+  `.x`. A race frame resolves the scene depth (1024x600, read by the
+  full-screen rect pass), the cars' 512x512 shadow map, and several 256x256
+  targets.
+- **Supporting changes:** `R32_FLOAT` joined the render-target whitelist, and
+  `pgr3_dump_frames` writes it as grey.
+
 **Open, in rough order of what is visible in a race:**
-1. **MSAA and depth resolves.** The scene is 2x MSAA and environment passes
-   4x; depth resolves (flags `0x4`/`0x14`) are not modelled, which also
-   leaves shadow maps empty (the dark band on the road); a 1024x600
-   `k_24_8_FLOAT` texture (the scene's depth resolve) is sampled and rejected.
+1. **MSAA.** The scene is 2x MSAA and the environment passes 4x; the host
+   renders everything at 1x.
 2. **Remaining textures:** linear volume textures (64x64x32 `k_8_8_8_8`), and
    the 512x192 one that decodes as noise.
 3. **The garage preview is overexposed,** and the race needs checking against
