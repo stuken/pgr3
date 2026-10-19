@@ -868,7 +868,7 @@ frame, apart from small timing offsets.
 **Vulkan validation:** not yet run; the machine has no Vulkan SDK (and so no
 `VK_LAYER_KHRONOS_validation`).
 
-**Tokyo washout (fixed, pending a check at the spot).** Parts of Tokyo drew
+**Tokyo washout (fixed, checked at the spot).** Parts of Tokyo drew
 the whole scene lifted towards the fog colour (`tokyo_washedout.rdc` against
 `tokyo_fine.rdc`). Fog, light, sky and SH constants and every texture
 matched; the first scene draw already differed, through VS c0-c2: a car's
