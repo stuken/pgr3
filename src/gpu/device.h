@@ -107,6 +107,15 @@ public:
   // buffer = RenderBufferReference{} clears the slot.
   static void SetVertexStream(u32 slot, plume::RenderBufferReference buffer,
                               u32 size, u32 stride);
+  // All 16 slots at once, under one lock (the per-draw path).
+  struct VertexStream {
+    plume::RenderBufferReference buffer{};
+    u32 size = 0;
+    u32 stride = 0;
+  };
+  static void SetVertexStreams(const VertexStream (&streams)[16]);
+  // The texture slots whose entry is non-null, under one lock.
+  static void SetTextures(GuestTexture *const (&textures)[16]);
 
   // BeginCommandList force-dirties every stream slot, so a view left naming a
   // retired buffer would re-bind through it. Takes s.mutex.

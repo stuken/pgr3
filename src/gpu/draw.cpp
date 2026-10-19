@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstddef>
 #include <mutex>
+#include <optional>
 
 #include <plume_render_interface.h>
 
@@ -25,6 +26,7 @@
 #include "gpu/backend.h"
 #include "gpu/constant_buffers.h"
 #include "gpu/format.h"
+#include "gpu/perf_stats.h"
 #include "gpu/pipeline/pipeline_cache.h"
 #include "gpu/pipeline/pso_recorder.h"
 
@@ -297,6 +299,7 @@ bool Video::FlushRenderStateLocked(u32 device_guest) {
   // pipelineState can skip both the cache lookup and the bind.
   // BeginCommandList force-dirties this on every command list reset.
   if (s.dirtyStates.pipelineState) {
+    perf::Scope t(perf::Counter::DrawPipeline);
     PipelineState lookup = s.pipelineState;
     SanitizePipelineState(lookup);
     bool built = false;
@@ -339,6 +342,8 @@ bool Video::FlushRenderStateLocked(u32 device_guest) {
   if (device_guest) {
     // Constants the game wrote into the ring (world matrices among them).
     ApplyGuestWrittenConstants(device_guest);
+    std::optional<perf::Scope> t_consts;
+    t_consts.emplace(perf::Counter::DrawConstants);
     if (s.dirtyStates.vertexShaderConstants) {
       auto vs_alloc = UploadVertexShaderConstants(device_guest);
       if (vs_alloc.size) {
@@ -368,6 +373,8 @@ bool Video::FlushRenderStateLocked(u32 device_guest) {
     // fetch constants are written by unhooked recompiled code, so there is no
     // dirty signal. The upload is skipped internally when the built block is
     // byte-identical to the one already bound on this list.
+    t_consts.reset();
+    perf::Scope t_shared(perf::Counter::DrawShared);
     auto sc_alloc = UploadSharedConstants(device_guest);
     if (sc_alloc.size) {
 #if defined(PGR3_D3D12)

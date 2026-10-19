@@ -141,14 +141,16 @@ plume::RenderPrimitiveTopology MapPrimitiveType(u32 prim) {
 
 // Pixel samplers 0..15: device.textures[s] pairs with fetch constant s.
 void BindGuestTextures(const D3DDevice &dev) {
+  pgr3::gpu::GuestTexture *textures[16] = {};
   for (u32 i = 0; i < 16; ++i) {
     if (const u32 tex_va = dev.textures[i]) {
       auto *tex = pgr3::gpu::ResolveOrMirrorGuestTexture(tex_va);
       (tex ? g_stats.textures_resolved : g_stats.textures_unresolved)
           .fetch_add(1, std::memory_order_relaxed);
-      Video::SetTexture(i, tex);
+      textures[i] = tex;
     }
   }
+  Video::SetTextures(textures);
 }
 
 void CountRenderTarget() {
@@ -273,26 +275,25 @@ void TracePixelConstants(const D3DDevice &dev) {
 
 // Binds host mirrors of the device's vertex streams and index buffer.
 void BindGuestGeometry(const D3DDevice &dev, bool indexed) {
+  Video::VertexStream streams[16];
   for (u32 i = 0; i < 16; ++i) {
     const u32 offset = dev.streams[i][0];
     const u32 vb_va = dev.streams[i][1];
-    const u32 stride = u32(dev.streamStrides[i]) * 4;
+    streams[i].stride = u32(dev.streamStrides[i]) * 4;
     const auto *vb = pgr3::mem::at<const D3DVertexBuffer>(vb_va);
-    if (!vb_va || !vb) {
-      Video::SetVertexStream(i, {}, 0, stride);
+    if (!vb_va || !vb)
       continue;
-    }
     const u32 base = u32(vb->Fetch0) & ~0x3u;
     const u32 size = u32(vb->Fetch1) & 0x03FFFFFCu;
     GuestBuffer *mirror =
         pgr3::gpu::MirrorGuestBuffer(base, size, ResourceType::VertexBuffer, 4,
                                     plume::RenderFormat::UNKNOWN);
-    if (!mirror || !mirror->hasBuffer() || offset >= size) {
-      Video::SetVertexStream(i, {}, 0, stride);
+    if (!mirror || !mirror->hasBuffer() || offset >= size)
       continue;
-    }
-    Video::SetVertexStream(i, mirror->bufferRef(offset), size - offset, stride);
+    streams[i].buffer = mirror->bufferRef(offset);
+    streams[i].size = size - offset;
   }
+  Video::SetVertexStreams(streams);
   BindGuestTextures(dev);
   if (!indexed)
     return;
@@ -519,7 +520,10 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const DrawArgs &args) {
     }
     TraceVertexShaderInputs(*dev, args);
   }
-  BindGuestGeometry(*dev, args.indexed);
+  {
+    pgr3::gpu::perf::Scope t(pgr3::gpu::perf::Counter::DrawGeometry);
+    BindGuestGeometry(*dev, args.indexed);
+  }
 
   // One lock across the whole recording sequence, as in reblue: the
   // per-frame command list is single-producer.
@@ -531,14 +535,24 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const DrawArgs &args) {
   Video::SetDirtyValue<plume::RenderPrimitiveTopology>(
       s.dirtyStates.pipelineState, s.pipelineState.primitiveTopology,
       MapPrimitiveType(primitive_type));
-  if (!Video::BindDrawFramebufferLocked()) {
+  bool bound;
+  {
+    pgr3::gpu::perf::Scope t(pgr3::gpu::perf::Counter::DrawFramebuffer);
+    bound = Video::BindDrawFramebufferLocked();
+  }
+  if (!bound) {
     g_stats.no_framebuffer.fetch_add(1, std::memory_order_relaxed);
     return;
   }
   // Every host draw below passes this as its base or first vertex.
   pgr3::gpu::SetVertexIndexBase(args.indexed ? args.baseVertexIndex
                                              : static_cast<i32>(args.startVertex));
-  if (!Video::FlushRenderStateLocked(device_guest)) {
+  bool flushed;
+  {
+    pgr3::gpu::perf::Scope t(pgr3::gpu::perf::Counter::DrawFlush);
+    flushed = Video::FlushRenderStateLocked(device_guest);
+  }
+  if (!flushed) {
     g_stats.no_state.fetch_add(1, std::memory_order_relaxed);
     return;
   }
@@ -820,7 +834,12 @@ void FlushPendingUP() {
       s.dirtyStates.pipelineState, s.pipelineState.primitiveTopology,
       MapPrimitiveType(p.primitive_type));
   g_stats.issued.fetch_add(1, std::memory_order_relaxed);
-  if (!Video::BindDrawFramebufferLocked()) {
+  bool bound;
+  {
+    pgr3::gpu::perf::Scope t(pgr3::gpu::perf::Counter::DrawFramebuffer);
+    bound = Video::BindDrawFramebufferLocked();
+  }
+  if (!bound) {
     g_stats.no_framebuffer.fetch_add(1, std::memory_order_relaxed);
     return;
   }

@@ -22,6 +22,13 @@ enum class Counter : u32 {
   Draw,          // a guest draw dispatched
   FenceWait,     // Present waiting for the GPU to free the next frame slot
   PaceSleep,     // Present sleeping to the fps limit
+  // Parts of Draw:
+  DrawGeometry,    // binding the guest's streams, indices and textures
+  DrawFramebuffer, // BindDrawFramebufferLocked
+  DrawFlush,       // FlushRenderStateLocked, all of it
+  DrawPipeline,    // the pipeline lookup and bind inside it
+  DrawConstants,   // the VS and PS constant uploads inside it
+  DrawShared,      // the shared constants (fetch constants, flags) inside it
   kCount,
 };
 

@@ -35,7 +35,8 @@ std::array<Stat, size_t(Counter::kCount)> g_stats;
 
 constexpr const char *kNames[] = {
     "pso build", "shader link", "texture mirror", "texel hash", "buffer hash",
-    "buffer upload", "draw", "fence wait", "pace sleep",
+    "buffer upload", "draw", "fence wait", "pace sleep", " draw geometry",
+    " draw framebuf", " draw flush", "  pipeline", "  constants", "  shared",
 };
 static_assert(std::size(kNames) == size_t(Counter::kCount));
 

@@ -17,7 +17,7 @@ than repeating it. SDK: rexglue 0.10.0.
 | 3. Build integration | **Done.** Both configurations build. Every build makes the shader cache; `PGR3_NATIVE_GPU=ON` builds `pgr3.exe` (D3D12) and `pgr3_vk.exe` (Vulkan) on plume with the cache and 548 prelinked variants. Until Phase 5 they log that the renderer is missing and exit. |
 | 4. D3D identification (XDK 2099) | **Done.** `config/d3d.toml` names 74 functions, including `BeginTiling`/`EndTiling` and `XPhysicalAlloc`/`Free`. `src/gpu/d3d.h` has the 2099 device and resource layouts, every field checked against PGR3's code. The render setup is confirmed: 1024x600, 2x MSAA, 7e3. See Phase 4 findings. |
 | 5. Native renderer bring-up | **In progress.** rr6's renderer is ported and runs PGR3 on D3D12 and Vulkan from boot through the front end, garage and menus into a London race. The race now has its full scenery: trees, crowd, fences, lane markings and textured buildings. Instanced fetches are pulled in the shader. Rect lists are expanded to quads. Depth resolves feed the shadow maps. Constants the game writes into the ring, and the bool constants, reach the host. MSAA is modelled (2x scene, 4x environment). Open: other cities and modes against xenos. See Phase 5 progress. |
-| 6. Hardening and performance | Not started. |
+| 6. Hardening and performance | **In progress.** Race frames hold 60 fps at the default 2x scale; see Phase 6 progress. |
 | 7. Geometry Wars (`gw.xex`) | Out of scope until 5 is done. |
 
 ## What we know about PGR3
@@ -818,6 +818,25 @@ Mostly carry-over work from rr6's Phase 5:
 - optional: FXAA before the HUD, 16-bit output, texture replacement and
   dumping, anisotropy override;
 - Linux, as rr6 has it (written, not yet built).
+
+### Phase 6 progress
+
+**Per-draw CPU cost.** `pgr3_perf_stats=300` now splits `draw` into its stages
+(geometry, framebuffer, flush, and inside the flush the pipeline, constants
+and shared constants). A London race at the default 2x scale was CPU-bound:
+3,600 draws a frame took 13-16 ms, 8.6 ms of it binding streams and textures,
+and the GPU never made the CPU wait. The binding took a lock per vertex stream
+slot (all 16, every draw) and four or five per bound texture. Now:
+- `Video::SetVertexStreams` and `Video::SetTextures` bind all slots under one
+  lock;
+- `ResolveOrMirrorGuestTexture` answers repeats from a per-thread cache, keyed
+  by the texture's fetch words, the frame and a generation that every mirror
+  or resolve target creation, rebuild or eviction bumps on entry and exit;
+- `GuestMirrorFrame` is an atomic read.
+
+Draws now cost 6-7 ms a frame (geometry 3 ms), and the race holds 60 fps
+with 4-5 ms of the frame spent in the pacing sleep. No pipeline builds happen
+mid-race once the course has loaded.
 
 ### Phase 7: Geometry Wars (`gw.xex`)
 

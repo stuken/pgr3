@@ -2,6 +2,7 @@
 
 #include "gpu/guest_buffers.h"
 
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
@@ -33,7 +34,8 @@ std::vector<std::unique_ptr<plume::RenderBuffer>> g_graveyard[kNumFrames];
 // Evicted mirrors keep their GuestBuffer alive until the slot drains too, since
 // Video's index binding holds the GuestBuffer pointer itself.
 std::vector<std::unique_ptr<GuestBuffer>> g_dead_mirrors[kNumFrames];
-u64 g_frame = 0;
+// Atomic so GuestMirrorFrame reads it without the mirror lock.
+std::atomic<u64> g_frame{0};
 
 u64 Key(u32 base_va, ResourceType type) {
   return (u64(static_cast<u32>(type)) << 32) | base_va;
@@ -164,10 +166,7 @@ void AdvanceGuestBufferFrame() {
   ++g_frame;
 }
 
-u64 GuestMirrorFrame() {
-  std::lock_guard lock(g_mutex);
-  return g_frame;
-}
+u64 GuestMirrorFrame() { return g_frame.load(std::memory_order_relaxed); }
 
 void DrainGuestBufferMirrors(u32 slot) {
   std::vector<std::unique_ptr<plume::RenderBuffer>> dead;

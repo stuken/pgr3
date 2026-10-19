@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <functional>
+#include <atomic>
 #include <cstring>
 #include <memory>
 #include <mutex>
@@ -93,6 +94,20 @@ u32 FetchDepth(const xe::xe_gpu_texture_fetch_t &f) {
 // D3DTexture_UnlockRect reads the base address at +20 and the mip address at
 // +36, dwords 1 and 5 of this fetch constant.
 constexpr u32 kTextureFetchOffset = offsetof(D3DTexture, Format);
+
+// Bumped whenever a mirror or resolve target is created, rebuilt or evicted,
+// so ResolveOrMirrorGuestTexture's per-thread cache never hands out one that
+// has gone.
+std::atomic<u64> g_texture_generation{1};
+void BumpTextureGeneration() {
+  g_texture_generation.fetch_add(1, std::memory_order_acq_rel);
+}
+// Bumps on entry and exit: a lookup racing the change cannot cache what it
+// saw half-way under the final generation.
+struct TextureGenerationGuard {
+  TextureGenerationGuard() { BumpTextureGeneration(); }
+  ~TextureGenerationGuard() { BumpTextureGeneration(); }
+};
 
 bool ReadFetchWords(u32 guest_va, u32 fc[6]) {
   const auto *words =
@@ -472,6 +487,7 @@ GuestTexture *Build2DMirror(const MirrorLayout &L, const u8 *src,
 GuestTexture *GetOrCreateNativeMirror(u32 guest_va) {
   if (!guest_va)
     return nullptr;
+  TextureGenerationGuard generation_guard;
   std::lock_guard<std::mutex> lock(g_mirror_mutex);
 
   auto it = g_native_mirrors.find(guest_va);
@@ -561,6 +577,7 @@ GuestTexture *GetOrCreateNativeMirror(u32 guest_va) {
 }
 
 void EvictNativeTexture(u32 guest_va) {
+  TextureGenerationGuard generation_guard;
   if (!guest_va)
     return;
   std::lock_guard<std::mutex> lock(g_mirror_mutex);
@@ -663,6 +680,7 @@ GuestTexture *GetOrCreateResolveTarget(u32 guest_va,
   if (slot && slot->width == width && slot->height == height &&
       slot->format == format && slot->viewDimension == view_dim)
     return slot.get();
+  TextureGenerationGuard generation_guard;
   if (slot) {
     Video::NotifyTextureDestroyed(slot.get());
     g_pending_native_destroy[Video::RetireSlot("resolve target")].push_back(
@@ -717,6 +735,7 @@ GuestTexture *GetOrCreateResolveTarget(u32 guest_va,
 
 
 bool EvictGuestTexture(u32 guest_va) {
+  TextureGenerationGuard generation_guard;
   if (!guest_va)
     return false;
   bool found = false;
@@ -744,6 +763,7 @@ bool EvictGuestTexture(u32 guest_va) {
 }
 
 u32 EvictGuestTexturesInRange(u32 begin, u32 end) {
+  TextureGenerationGuard generation_guard;
   const auto in = [&](u32 a) { return a >= begin && a < end; };
   std::vector<u32> dead;
   {
@@ -763,14 +783,47 @@ u32 EvictGuestTexturesInRange(u32 begin, u32 end) {
 // address, format, size) changes under the same struct, i.e. the struct was
 // freed and reused. Only the texel-identifying words are compared: the sampler
 // fields live in the device copy, not here.
+namespace {
+GuestTexture *ResolveOrMirrorGuestTextureSlow(u32 guest_va, const u32 (&fc)[6]);
+} // namespace
+
+// Draws bind the same textures over and over, and the full lookup takes
+// several locks. A per-thread cache answers repeats until the texture's fetch
+// words, the frame (linear texels are rehashed once a frame) or the mirror
+// generation change.
 GuestTexture *ResolveOrMirrorGuestTexture(u32 guest_va) {
   if (!guest_va)
     return nullptr;
-  if (GuestTexture *resolved = FindResolveTarget(guest_va))
-    return resolved;
   u32 fc[6];
   if (!ReadFetchWords(guest_va, fc))
-    return nullptr;
+    return FindResolveTarget(guest_va);
+  struct Entry {
+    u32 va = 0;
+    u32 fc[6] = {};
+    u64 generation = 0;
+    u64 frame = ~0ull;
+    GuestTexture *tex = nullptr;
+  };
+  thread_local Entry t_cache[512];
+  Entry &e = t_cache[(guest_va >> 3) & 511];
+  const u64 generation = g_texture_generation.load(std::memory_order_acquire);
+  const u64 frame = GuestMirrorFrame();
+  if (e.va == guest_va && e.generation == generation && e.frame == frame &&
+      std::memcmp(e.fc, fc, sizeof(fc)) == 0)
+    return e.tex;
+  GuestTexture *tex = ResolveOrMirrorGuestTextureSlow(guest_va, fc);
+  e.va = guest_va;
+  std::memcpy(e.fc, fc, sizeof(fc));
+  e.generation = generation;
+  e.frame = frame;
+  e.tex = tex;
+  return tex;
+}
+
+namespace {
+GuestTexture *ResolveOrMirrorGuestTextureSlow(u32 guest_va, const u32 (&fc)[6]) {
+  if (GuestTexture *resolved = FindResolveTarget(guest_va))
+    return resolved;
   // dword1: format/endian/tiled/base, dword2: size, dword5: mip address.
   u64 signature =
       (u64(fc[1]) << 32 | fc[2]) ^ (u64(fc[5]) * 0x9E3779B97F4A7C15ull);
@@ -823,5 +876,6 @@ GuestTexture *ResolveOrMirrorGuestTexture(u32 guest_va) {
   }
   return tex;
 }
+} // namespace
 
 } // namespace pgr3::gpu

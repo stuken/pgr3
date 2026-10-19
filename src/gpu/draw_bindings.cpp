@@ -29,16 +29,9 @@ std::atomic<u32> g_alpha_threshold_bits{0};
 std::atomic<u32> g_alpha_test_func{6}; // GREATER_EQUAL
 } // namespace
 
-void Video::SetTexture(u32 index, GuestTexture *texture) {
-  if (index >= 16)
-    return;
-  // A null SetTexture is not an unbind on Xenos: it clears a bookkeeping
-  // pointer and leaves the fetch constant alone, so the slot keeps its last
-  // non-null texture until a real bind replaces it.
-  if (texture == nullptr)
-    return;
-  auto &s = state();
-  std::lock_guard lock(s.mutex);
+namespace {
+
+void SetTextureLocked(VideoState &s, u32 index, GuestTexture *texture) {
   if (texture->texture) {
     BindTextureSRVLocked(s, texture);
     // SharedConstants substitution samples the source as a Texture2D, which an
@@ -50,6 +43,48 @@ void Video::SetTexture(u32 index, GuestTexture *texture) {
     }
   }
   s.textures[index] = texture;
+}
+
+void SetVertexStreamLocked(VideoState &s, u32 slot,
+                           plume::RenderBufferReference buffer, u32 size,
+                           u32 stride) {
+  // Expanding the dirty range only on a real change lets FlushRenderState skip
+  // the per-draw 16-slot setVertexBuffers, and bind just [first, last] when
+  // something did move.
+  bool dirty = false;
+  Video::SetDirtyValue(dirty, s.vertex_views[slot].buffer, buffer);
+  Video::SetDirtyValue(dirty, s.vertex_views[slot].size, size);
+  Video::SetDirtyValue(dirty, s.input_slots[slot].stride, stride);
+  if (dirty) {
+    const u8 i = static_cast<u8>(slot);
+    if (i < s.dirtyStates.vertexStreamFirst)
+      s.dirtyStates.vertexStreamFirst = i;
+    if (i > s.dirtyStates.vertexStreamLast)
+      s.dirtyStates.vertexStreamLast = i;
+  }
+}
+
+} // namespace
+
+void Video::SetTexture(u32 index, GuestTexture *texture) {
+  if (index >= 16)
+    return;
+  // A null SetTexture is not an unbind on Xenos: it clears a bookkeeping
+  // pointer and leaves the fetch constant alone, so the slot keeps its last
+  // non-null texture until a real bind replaces it.
+  if (texture == nullptr)
+    return;
+  auto &s = state();
+  std::lock_guard lock(s.mutex);
+  SetTextureLocked(s, index, texture);
+}
+
+void Video::SetTextures(GuestTexture *const (&textures)[16]) {
+  auto &s = state();
+  std::lock_guard lock(s.mutex);
+  for (u32 i = 0; i < 16; ++i)
+    if (textures[i])
+      SetTextureLocked(s, i, textures[i]);
 }
 
 void Video::SetVertexShader(GuestShader *shader) {
@@ -127,20 +162,15 @@ void Video::SetVertexStream(u32 slot, plume::RenderBufferReference buffer,
     return;
   auto &s = state();
   std::lock_guard lock(s.mutex);
-  // Expanding the dirty range only on a real change lets FlushRenderState skip
-  // the per-draw 16-slot setVertexBuffers, and bind just [first, last] when
-  // something did move.
-  bool dirty = false;
-  SetDirtyValue(dirty, s.vertex_views[slot].buffer, buffer);
-  SetDirtyValue(dirty, s.vertex_views[slot].size, size);
-  SetDirtyValue(dirty, s.input_slots[slot].stride, stride);
-  if (dirty) {
-    const u8 i = static_cast<u8>(slot);
-    if (i < s.dirtyStates.vertexStreamFirst)
-      s.dirtyStates.vertexStreamFirst = i;
-    if (i > s.dirtyStates.vertexStreamLast)
-      s.dirtyStates.vertexStreamLast = i;
-  }
+  SetVertexStreamLocked(s, slot, buffer, size, stride);
+}
+
+void Video::SetVertexStreams(const VertexStream (&streams)[16]) {
+  auto &s = state();
+  std::lock_guard lock(s.mutex);
+  for (u32 i = 0; i < 16; ++i)
+    SetVertexStreamLocked(s, i, streams[i].buffer, streams[i].size,
+                          streams[i].stride);
 }
 
 void Video::MarkVSConstantsDirty() {
