@@ -853,6 +853,47 @@ GuestTexture *ResolveOrMirrorGuestTextureSlow(u32 guest_va, const u32 (&fc)[6]) 
       hashed_frame = frame;
     }
     signature ^= hash;
+  } else {
+    // Tiled textures stream in (.stream2 course data), often into memory a
+    // previous texture held: a mirror built before its texels landed showed
+    // the old ones, a diffuse slot drawing a normal map, until something
+    // rebuilt it. A full hash of every tiled texture every frame is too
+    // costly, so 64 16-byte samples spread over the base level and the start
+    // of the mips stand in, once a frame.
+    const u64 frame = GuestMirrorFrame();
+    std::lock_guard hash_lock(s_unhooked_mutex);
+    auto &[hashed_frame, hash] = s_texel_hashes[guest_va];
+    if (hashed_frame != frame || !hash) {
+      const MirrorLayout L = MakeLayout(fetch);
+      const u32 slices = fetch.dimension == xe::DataDimension::kCube ? 6u
+                         : fetch.dimension == xe::DataDimension::k3D
+                             ? rex::align(L.depth, 4u)
+                             : 1u;
+      const u32 bytes = L.aligned_w * L.aligned_h * L.bytes_per_block * slices;
+      constexpr u32 kSamples = 64, kSampleBytes = 16;
+      u64 samples[kSamples * kSampleBytes / 8];
+      u32 n = 0;
+      auto take = [&](u32 base, u32 span, u32 count) {
+        if (!base || span < kSampleBytes)
+          return;
+        for (u32 i = 0; i < count && n < kSamples; ++i, ++n) {
+          const u32 off = u32(u64(span - kSampleBytes) * i / std::max(count - 1, 1u)) & ~15u;
+          const auto *b = pgr3::mem::try_at<const u8>(base + off);
+          if (b)
+            std::memcpy(&samples[n * 2], b, kSampleBytes);
+          else
+            samples[n * 2] = samples[n * 2 + 1] = 0;
+        }
+      };
+      take(fetch.base_address << 12, bytes, fetch.mip_address ? 48 : 64);
+      take(fetch.mip_address << 12, std::max(bytes / 3, kSampleBytes), 16);
+      {
+        perf::Scope timer(perf::Counter::TexelHash, n * kSampleBytes);
+        hash = XXH3_64bits(samples, n * kSampleBytes) | 1;
+      }
+      hashed_frame = frame;
+    }
+    signature ^= hash;
   }
   {
     std::lock_guard lock(s_unhooked_mutex);
