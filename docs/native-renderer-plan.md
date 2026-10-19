@@ -797,7 +797,9 @@ everywhere) all matched xenos; the bloom did not:
 **Open, in rough order of what is visible in a race:**
 1. **The other cities and night races,** replays and movies, against xenos.
    These need menu scripts.
-2. The title screen's logo rings are dimmer than on xenos.
+2. ~~The title screen's logo rings are dimmer than on xenos.~~ Not a fault:
+   the logo animates (the rings fade in and out), and the two builds were
+   caught at different points of the loop.
 3. The Vulkan exe has had no validation-layer pass.
 
 The default resolution scale (2x, a 2048x1200 scene) runs with MSAA on and
@@ -858,6 +860,10 @@ threads as their shaders and declarations appear; a London race then
 compiles none on the drawing thread. On this machine the driver cache made
 drawing-thread builds cheap (0.2-0.5 ms) anyway; the list is for first runs
 and after driver updates, when a build costs 10-20 ms.
+
+**Movies.** The boot Bink movies (Microsoft, Dolby, the warning screen,
+Bizarre, the Gotham TV intro) and the attract movie match xenos frame for
+frame, apart from small timing offsets.
 
 **Vulkan validation:** not yet run; the machine has no Vulkan SDK (and so no
 `VK_LAYER_KHRONOS_validation`).
