@@ -47,6 +47,11 @@ namespace {
 //   RB_STENCILREFMASK: REF[7:0] MASK[15:8] WRITEMASK[23:16].
 REXCVAR_DEFINE_BOOL(pgr3_debug_ztest_always, false, kCvarGroup,
                     "Bring-up experiment: make every depth test pass");
+REXCVAR_DEFINE_STRING(pgr3_debug_solid_vs, "", kCvarGroup,
+                      "Bring-up experiment: draw the geometry of the vertex "
+                      "shader with this hash (hex) in solid magenta");
+REXCVAR_DEFINE_BOOL(pgr3_debug_alpha_test_off, false, kCvarGroup,
+                    "Bring-up experiment: turn off every alpha test");
 REXCVAR_DEFINE_BOOL(pgr3_debug_cull_none, false, kCvarGroup,
                     "Bring-up experiment: draw both faces of every triangle");
 
@@ -78,6 +83,13 @@ void ReadDeviceRenderState(VideoState &s, u32 device_guest) {
   Video::SetDirtyValue(dirty, ps.destBlendAlpha,
                        ConvertBlendMode((blend >> 24) & 0x1Fu));
 
+  {
+    const std::string &solid = REXCVAR_GET(pgr3_debug_solid_vs);
+    const bool debug_solid =
+        !solid.empty() && s.vertex_shader && s.vertex_shader->shaderCacheEntry &&
+        std::format("{:016X}", s.vertex_shader->shaderCacheEntry->hash) == solid;
+    Video::SetDirtyValue(dirty, ps.debugSolid, debug_solid);
+  }
   Video::SetDirtyValue(dirty, ps.zEnable, (depth & 0x2u) != 0);
   Video::SetDirtyValue(dirty, ps.zWriteEnable, (depth & 0x4u) != 0);
   // Bring-up experiment: pgr3_debug_ztest_always passes every depth test.
@@ -182,7 +194,8 @@ void ReadDeviceRenderState(VideoState &s, u32 device_guest) {
 
   // Fixed-function alpha test on Xenos; the recompiled PS compares on the
   // spec constant against g_AlphaThreshold with ALPHA_FUNC instead.
-  Video::SetAlphaTestMode((color & 0x8u) != 0);
+  Video::SetAlphaTestMode((color & 0x8u) != 0 &&
+                         !REXCVAR_GET(pgr3_debug_alpha_test_off));
   Video::SetAlphaTestFunc(color & 0x7u);
   Video::SetAlphaThreshold(static_cast<float>(dev->rbAlphaRef));
 }

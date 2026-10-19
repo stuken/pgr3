@@ -9,11 +9,13 @@
 // The recording sequence follows reblue's gpu/hooks/draw.cpp (Copyright (c)
 // 2026 Tom Clay, BSD 3-Clause).
 
+#include <algorithm>
 #include <atomic>
 #include <format>
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include <rex/cvar.h>
@@ -40,6 +42,11 @@
 
 REXCVAR_DEFINE_INT32(pgr3_trace_frame, 0, kCvarGroup,
                      "Log every draw and resolve of present frame N (0 = off)");
+REXCVAR_DEFINE_INT32(pgr3_trace_frame_count, 1, kCvarGroup,
+                     "How many frames pgr3_trace_frame traces, from N on");
+REXCVAR_DEFINE_STRING(pgr3_trace_vs, "", kCvarGroup,
+                      "In the pgr3_trace_frame frame, also dump the VS constants "
+                      "and first stream records of draws with this VS hash (hex)");
 REXCVAR_DEFINE_STRING(pgr3_debug_skip_vs, "", kCvarGroup,
                       "Bring-up experiment: skip draws whose vertex shader hash "
                       "(hex, as pgr3_trace_frame prints it) is in this comma list");
@@ -163,7 +170,9 @@ std::string GuestCallChain(u32 sp, u32 lr, u32 depth) {
 // pgr3_trace_frame=N logs every draw of present frame N.
 bool TracingThisFrame() {
   const i32 wanted = REXCVAR_GET(pgr3_trace_frame);
-  return wanted > 0 && pgr3::gpu::PresentCount() + 1 == static_cast<u32>(wanted);
+  const i32 count = std::max(REXCVAR_GET(pgr3_trace_frame_count), 1);
+  const i64 frame = i64(pgr3::gpu::PresentCount()) + 1;
+  return wanted > 0 && frame >= wanted && frame < i64(wanted) + count;
 }
 
 void TraceDraw(const char *path, const D3DDevice &dev, u32 prim, u32 count) {
@@ -351,6 +360,49 @@ bool SkippedVertexShader(const pgr3::gpu::GuestShader *vs) {
   return false;
 }
 
+// pgr3_trace_vs: every non-zero VS constant of the draw, and the first
+// records of streams 0 and 1 as raw dwords, to evaluate a shader by hand.
+void TraceVertexShaderInputs(const D3DDevice &dev, const DrawArgs &args) {
+  const std::string &wanted = REXCVAR_GET(pgr3_trace_vs);
+  if (wanted.empty())
+    return;
+  const pgr3::gpu::GuestShader *vs;
+  {
+    auto &s = pgr3::gpu::state();
+    std::lock_guard lock(s.mutex);
+    vs = s.vertex_shader;
+  }
+  if (!vs || !vs->shaderCacheEntry ||
+      std::format("{:016X}", vs->shaderCacheEntry->hash) != wanted)
+    return;
+  std::string consts;
+  for (u32 c = 0; c < 256; ++c) {
+    const auto &v = dev.vsFloatConstants[c];
+    const float f[4] = {float(v[0]), float(v[1]), float(v[2]), float(v[3])};
+    if (f[0] == 0 && f[1] == 0 && f[2] == 0 && f[3] == 0)
+      continue;
+    consts += std::format(" c{}=({:.6g},{:.6g},{:.6g},{:.6g})", c, f[0], f[1],
+                          f[2], f[3]);
+  }
+  PGR3_INFO("[trace]   vs-input indexed={} base={} start={} start_index={} "
+            "consts{}",
+            args.indexed, args.baseVertexIndex, args.startVertex,
+            args.startIndex, consts);
+  for (u32 stream = 0; stream < 2; ++stream) {
+    const u32 stride = u32(dev.streamStrides[stream]) * 4;
+    const auto *vb = pgr3::mem::at<const D3DVertexBuffer>(dev.streams[stream][1]);
+    if (!vb || !dev.streams[stream][1] || !stride)
+      continue;
+    const u32 base = (u32(vb->Fetch0) & ~0x3u) + dev.streams[stream][0];
+    const auto *w = pgr3::mem::at<const be_u32>(base);
+    std::string records;
+    for (u32 i = 0; w && i < 8 * stride / 4; ++i)
+      records += std::format("{}{:08X}", i % (stride / 4) ? " " : " | ", u32(w[i]));
+    PGR3_INFO("[trace]   vs-input stream{} stride={} at 0x{:08X}{}", stream,
+              stride, base, records);
+  }
+}
+
 void DispatchDraw(u32 device_guest, u32 primitive_type, const DrawArgs &args) {
   pgr3::gpu::perf::Scope timer(pgr3::gpu::perf::Counter::Draw);
   PGR3_CPU_ZONE("Draw");
@@ -385,6 +437,7 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const DrawArgs &args) {
         PGR3_INFO("[trace]   {} consts{}", stage ? "ps" : "vs", consts);
       }
     }
+    TraceVertexShaderInputs(*dev, args);
   }
   BindGuestGeometry(*dev, args.indexed);
 
@@ -802,6 +855,23 @@ void ResolveNative(const ResolveArgs &a) {
              "point={} surface=0x{:08X}:{} lr=0x{:08X}",
              flags, dest, src ? src->width : 0, src ? src->height : 0, rect,
              point, surface_va, words, a.lr);
+  }
+  // Each destination's first resolve, to find where runtime textures (like
+  // the material crop sheet) come from without tracing their frame.
+  {
+    static std::mutex s_mutex;
+    static std::unordered_set<u32> s_seen;
+    std::lock_guard lock(s_mutex);
+    if (dest && s_seen.insert(dest).second) {
+      std::string rect = "full";
+      if (const auto *r = pgr3::mem::at<const be_u32>(a.rect_va); r && a.rect_va)
+        rect = std::format("{},{}-{},{}", u32(r[0]), u32(r[1]), u32(r[2]), u32(r[3]));
+      PGR3_INFO("first resolve into 0x{:08X}: flags=0x{:X} src={}x{} fmt={} "
+                "rect={} frame={} chain:{}",
+                dest, flags, src ? src->width : 0, src ? src->height : 0,
+                src ? static_cast<int>(src->format) : -1, rect,
+                pgr3::gpu::PresentCount(), GuestCallChain(a.sp, a.lr, 6));
+    }
   }
   // The guest clears only the resolved rect; the host clears the whole target.
   if (a.rect_va &&

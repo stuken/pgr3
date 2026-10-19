@@ -182,6 +182,10 @@ u32 D3DDevice_Swap_hook(u32 /*device*/, u32 front_buffer) {
     PGR3_INFO("D3DDevice_Swap: first frame (front buffer 0x{:08X})", front_buffer);
   if (s_presents == 60 || (s_presents % 600) == 0)
     pgr3::gpu::LogDrawStats(s_presents);
+  // Places log lines on the present count pgr3_trace_frame and
+  // pgr3_dump_frames take.
+  if (s_presents % 300 == 0)
+    PGR3_INFO("present {}", s_presents);
   pgr3::gpu::Video::Present(pgr3::gpu::FindResolveTarget(front_buffer));
   pgr3::gpu::AdvanceGuestBufferFrame();
   return 0;

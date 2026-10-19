@@ -290,7 +290,7 @@ std::string EmitEntry(const PipelineState &s) {
         std::format("0x{:X}", s.specConstants));
   BoolField(out, "occlusionCounting", s.occlusionCounting,
             d.occlusionCounting);
-  BoolField(out, "enhancedDOF", s.enhancedDOF, d.enhancedDOF);
+  BoolField(out, "debugSolid", s.debugSolid, d.debugSolid);
   if (out.back() == ',')
     out.pop_back();
   out += "},\n";

@@ -159,6 +159,8 @@ std::unique_ptr<plume::RenderPipeline> Build(const PipelineState &state) {
              : nullptr;
     if (state.pixelShader && !ps)
       return nullptr;
+    if (state.debugSolid)
+      ps = gpu::state().debug_solid_ps.get();
   }
 
   plume::RenderGraphicsPipelineDesc desc;

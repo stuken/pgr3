@@ -350,6 +350,8 @@ struct VideoState {
   std::unique_ptr<plume::RenderShader> copy_vs;
   std::unique_ptr<plume::RenderShader> copy_color_ps;
   std::unique_ptr<plume::RenderShader> fxaa_ps;
+  // pgr3_debug_solid_vs's stand-in pixel shader.
+  std::unique_ptr<plume::RenderShader> debug_solid_ps;
   std::unique_ptr<plume::RenderShader> copy_depth_ps;
 
   // Keyed by destination RT format (resolve destinations often differ from the

@@ -23,6 +23,7 @@
 #if defined(PGR3_D3D12)
 #include "src/gpu/shaders/hlsl/copy_color_ps.hlsl.dxil.h"
 #include "src/gpu/shaders/hlsl/fxaa_ps.hlsl.dxil.h"
+#include "src/gpu/shaders/hlsl/debug_solid_ps.hlsl.dxil.h"
 #include "src/gpu/shaders/hlsl/copy_depth_ps.hlsl.dxil.h"
 #include "src/gpu/shaders/hlsl/copy_vs.hlsl.dxil.h"
 #include "src/gpu/shaders/hlsl/gamma_correction_ps.hlsl.dxil.h"
@@ -30,6 +31,7 @@
 #else
 #include "src/gpu/shaders/hlsl/copy_color_ps.hlsl.spirv.h"
 #include "src/gpu/shaders/hlsl/fxaa_ps.hlsl.spirv.h"
+#include "src/gpu/shaders/hlsl/debug_solid_ps.hlsl.spirv.h"
 #include "src/gpu/shaders/hlsl/copy_depth_ps.hlsl.spirv.h"
 #include "src/gpu/shaders/hlsl/copy_vs.hlsl.spirv.h"
 #include "src/gpu/shaders/hlsl/gamma_correction_ps.hlsl.spirv.h"
@@ -240,6 +242,8 @@ bool BuildPipelineLayout(VideoState &s) {
 }
 
 bool BuildCopyPipeline(VideoState &s) {
+  s.debug_solid_ps = s.device->createShader(PGR3_SHADER_BLOB(debug_solid_ps),
+                                            "main", kHostShaderFormat);
   s.copy_vs = s.device->createShader(PGR3_SHADER_BLOB(copy_vs), "main",
                                      kHostShaderFormat);
   s.copy_color_ps = s.device->createShader(PGR3_SHADER_BLOB(copy_color_ps),

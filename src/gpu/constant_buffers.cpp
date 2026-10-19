@@ -21,6 +21,7 @@
 #include "core/logging.h"
 #include "core/memory_helpers.h"
 #include "core/profiling.h"
+#include "core/settings.h" // kCvarGroup
 #include "gpu/d3d.h"
 #include "gpu/device.h"
 #include "gpu/sampler_cache.h"
@@ -29,6 +30,9 @@
 #include "gpu/output.h"
 
 REXCVAR_DECLARE(bool, pgr3_scaled_post_filters);
+REXCVAR_DEFINE_BOOL(pgr3_debug_no_vertex_base, false, kCvarGroup,
+                    "Bring-up experiment: leave the draw's base vertex out of "
+                    "r0.x (if SV_VertexID already includes it)");
 
 #if defined(__x86_64__) || defined(_M_X64)
 #include <immintrin.h>
@@ -453,7 +457,8 @@ ConstantAllocation UploadSharedConstants(u32 device_guest) {
 
   s.shared.shadowPcfScale = s.shadowPcfScale;
 
-  s.shared.vertexIndexBase = s.vertexIndexBase;
+  s.shared.vertexIndexBase =
+      REXCVAR_GET(pgr3_debug_no_vertex_base) ? 0 : s.vertexIndexBase;
   s.shared.uintTexcoords =
       vs.vertex_declaration ? vs.vertex_declaration->uintTexcoords : 0u;
   // Vertex pulling: the bound streams as the input assembler sees them.

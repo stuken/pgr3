@@ -70,9 +70,9 @@ struct PipelineState {
   // When set, the pipeline cache swaps the guest PS for occlusion_count_ps.
   // Hashed so the counting variant is its own PSO. Off for normal draws.
   bool occlusionCounting = false;
-  // Dead field, always false, kept only to hold the PSO raw-byte hash / CSV
-  // schema stable. Drop on the next cache regen.
-  bool enhancedDOF = false;
+  // pgr3_debug_solid_vs: the pipeline cache swaps the guest PS for
+  // debug_solid_ps. (Was the dead enhancedDOF field, which kept the size.)
+  bool debugSolid = false;
 };
 #pragma pack(pop)
 
