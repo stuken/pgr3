@@ -117,16 +117,23 @@ GuestTexture *ResolvedSingleSampleLocked(VideoState &s, GuestTexture *src) {
   tex->hostScale = src->hostScale;
   if (tex->descriptorIndex == kInvalidDescriptorIndex)
     BindTextureSRVLocked(s, tex);
+  // A single-sample source (pgr3_fxaa on a 1x target) is a plain copy.
+  const bool msaa = src->sampleCount != plume::RenderSampleCount::COUNT_1;
+  const auto src_layout = msaa ? plume::RenderTextureLayout::RESOLVE_SOURCE
+                               : plume::RenderTextureLayout::COPY_SOURCE;
+  const auto dst_layout = msaa ? plume::RenderTextureLayout::RESOLVE_DEST
+                               : plume::RenderTextureLayout::COPY_DEST;
   plume::RenderTextureBarrier pre[2] = {
-      plume::RenderTextureBarrier(src->texture,
-                                  plume::RenderTextureLayout::RESOLVE_SOURCE),
-      plume::RenderTextureBarrier(tex->texture,
-                                  plume::RenderTextureLayout::RESOLVE_DEST),
+      plume::RenderTextureBarrier(src->texture, src_layout),
+      plume::RenderTextureBarrier(tex->texture, dst_layout),
   };
   s.command_list->barriers(plume::RenderBarrierStage::COPY, pre, std::size(pre));
-  src->layout = plume::RenderTextureLayout::RESOLVE_SOURCE;
-  tex->layout = plume::RenderTextureLayout::RESOLVE_DEST;
-  s.command_list->resolveTexture(tex->texture, src->texture);
+  src->layout = src_layout;
+  tex->layout = dst_layout;
+  if (msaa)
+    s.command_list->resolveTexture(tex->texture, src->texture);
+  else
+    s.command_list->copyTexture(tex->texture, src->texture);
   return tex;
 }
 
@@ -299,8 +306,7 @@ bool CopySurfaceToTextureLocked(VideoState &s, GuestTexture *src,
     } else if (depth_dst) {
       pipeline = GetOrCreateCopyDepthPipeline(s, dst->format);
     } else {
-      pipeline = GetOrCreateResolvePipeline(s, dst->format,
-                                            filter == CopyFilter::Fxaa);
+      pipeline = GetOrCreateResolvePipeline(s, dst->format);
     }
     if (!pipeline) {
       static std::atomic<u32> s_warn{0};
@@ -846,46 +852,62 @@ void BuildGuestScaleCopiesLocked(VideoState &s) {
   }
 }
 
-// RR6's colour grading pass (ps_82062AB8: colour balance, gamma, monotone)
-// is the last 3D post pass: it reads the resolved frame from slot 0 into the
-// back buffer, and the HUD is drawn straight after. Giving it an FXAA'd copy
-// of that frame anti-aliases the scene without softening the HUD. Grading is
-// per pixel, so filtering just before it is filtering the final scene.
-// RR6's shader hash was 0x0D40BDEF428B4D2D. PGR3's last pass before the HUD
-// is not identified yet, so pgr3_fxaa does nothing until it is.
-constexpr u64 kColourGradingPSHash = 0;
+// PGR3's final composite (ps_8200E300: bloom, exposure, the tone map) is the
+// last 3D pass. It draws the whole scene target, and the HUD is drawn into
+// the same target straight after. FXAA on its output, in place, anti-aliases
+// the tone-mapped scene without softening the HUD; its input is still HDR,
+// where FXAA's luma edges would be wrong. (rr6 filtered the input of RR6's
+// grading pass, which was LDR.)
+constexpr u64 kCompositePSHash = 0x1A2FBF8FB0530BB6ull;
 
-void BuildFxaaCopyLocked(VideoState &s) {
+void FxaaAfterCompositeLocked(VideoState &s) {
   if (!REXCVAR_GET(pgr3_fxaa))
     return;
   const GuestShader *ps = s.pixel_shader;
   if (!ps || !ps->shaderCacheEntry ||
-      ps->shaderCacheEntry->hash != kColourGradingPSHash)
+      ps->shaderCacheEntry->hash != kCompositePSHash)
     return;
-  GuestTexture *tex = s.textures[0];
-  if (!tex || !tex->texture ||
-      tex->viewDimension != plume::RenderTextureViewDimension::TEXTURE_2D ||
-      tex->mipLevels > 1 || !IsRenderTargetCapable(tex->format))
+  GuestTexture *rt = s.bound_fb_rt;
+  if (!rt || !rt->texture || IsDepthFormat(rt->format) || !s.command_list_open)
     return;
-  GuestTexture *src =
-      s.sample_overrides[0] ? s.sample_overrides[0] : SampledTextureLocked(s, tex);
-  if (!src->texture || src->sampleCount != plume::RenderSampleCount::COUNT_1)
+  plume::RenderPipeline *pipeline =
+      GetOrCreateResolvePipeline(s, rt->format, true, rt->sampleCount);
+  plume::RenderFramebuffer *fb = GetFramebuffer(s, rt, nullptr);
+  if (!pipeline || !fb)
     return;
-  if (!tex->fxaaCopy) {
-    tex->fxaaCopy =
-        CreateGuestScaleCopy(s, src, src->width, src->height, src->hostScale);
-    if (!tex->fxaaCopy) {
-      PGR3_WARN_FIRST(4, "FXAA copy {}x{} fmt={} could not be created",
-                     src->width, src->height, static_cast<int>(src->format));
-      return;
-    }
-  }
-  GuestTexture *copy = tex->fxaaCopy.get();
-  if (copy->width != src->width || copy->height != src->height ||
-      copy->format != src->format)
+  GuestTexture *src = ResolvedSingleSampleLocked(s, rt);
+  if (!src || src->descriptorIndex == kInvalidDescriptorIndex)
     return;
-  if (CopySurfaceToTextureLocked(s, src, copy, "Fxaa", CopyFilter::Fxaa))
-    s.sample_overrides[0] = copy;
+  plume::RenderTextureBarrier pre[2] = {
+      plume::RenderTextureBarrier(src->texture,
+                                  plume::RenderTextureLayout::SHADER_READ),
+      plume::RenderTextureBarrier(rt->texture,
+                                  plume::RenderTextureLayout::COLOR_WRITE),
+  };
+  s.command_list->barriers(plume::RenderBarrierStage::GRAPHICS, pre,
+                           std::size(pre));
+  src->layout = plume::RenderTextureLayout::SHADER_READ;
+  rt->layout = plume::RenderTextureLayout::COLOR_WRITE;
+  s.command_list->setFramebuffer(fb);
+  s.command_list->setViewports(plume::RenderViewport(
+      0.0f, 0.0f, float(rt->width), float(rt->height)));
+  s.command_list->setScissors(
+      plume::RenderRect(0, 0, i32(rt->width), i32(rt->height)));
+  s.command_list->setPipeline(pipeline);
+  struct CopyPushConstants {
+    u32 resourceDescriptorIndex;
+    u32 resourceDescriptorIndex2;
+    float param0;
+    float param1;
+  } push{src->descriptorIndex, 0u, 1.0f, 0.0f};
+  s.command_list->setGraphicsPushConstants(kCopyPushConstantRangeIndex, &push,
+                                           kCopyPushConstantByteOffset,
+                                           sizeof(push));
+  s.command_list->drawInstanced(3, 1, 0, 0);
+  // The next guest draw binds its own framebuffer, pipeline and viewport.
+  s.current_pso = nullptr;
+  s.dirtyStates.pipelineState = true;
+  s.draw_framebuffer_bound = false;
 }
 
 } // namespace pgr3::gpu

@@ -374,7 +374,7 @@ struct VideoState {
                      std::unique_ptr<plume::RenderPipeline>>
       resolve_pipelines_by_format;
   // The same copy, filtered by fxaa_ps (pgr3_fxaa).
-  std::unordered_map<plume::RenderFormat,
+  std::unordered_map<u64,
                      std::unique_ptr<plume::RenderPipeline>>
       fxaa_pipelines_by_format;
 
@@ -540,9 +540,9 @@ void DrainDescriptorSlotsLocked(VideoState &s, u32 slot);
 plume::RenderPipeline *GetOrCreateCopyDepthPipeline(VideoState &s,
                                                     plume::RenderFormat fmt);
 // fxaa: the copy runs fxaa_ps instead of copy_color_ps.
-plume::RenderPipeline *GetOrCreateResolvePipeline(VideoState &s,
-                                                  plume::RenderFormat format,
-                                                  bool fxaa = false);
+plume::RenderPipeline *GetOrCreateResolvePipeline(
+    VideoState &s, plume::RenderFormat format, bool fxaa = false,
+    plume::RenderSampleCounts samples = plume::RenderSampleCount::COUNT_1);
 // The shader resolve of a 2x or 4x source into 'format' (resolve_msaa_ps).
 plume::RenderPipeline *
 GetOrCreateResolveMSAAPipeline(VideoState &s, plume::RenderFormat format,
@@ -561,8 +561,8 @@ GuestTexture *SampledTextureLocked(const VideoState &s, GuestTexture *tex);
 // from the draw's target, at the target's scale. Records copies, so it runs
 // before the draw framebuffer is bound.
 void BuildGuestScaleCopiesLocked(VideoState &s);
-// Under pgr3_fxaa, an FXAA'd copy of the frame the colour grading pass reads,
-// into sample_overrides. Runs after BuildGuestScaleCopiesLocked.
-void BuildFxaaCopyLocked(VideoState &s);
+// Under pgr3_fxaa, after the draw that just recorded: if it was PGR3's final
+// composite, FXAAs the frame it drew, in place, before the HUD goes on top.
+void FxaaAfterCompositeLocked(VideoState &s);
 
 } // namespace pgr3::gpu

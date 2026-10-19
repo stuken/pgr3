@@ -195,7 +195,6 @@ bool Video::BindDrawFramebufferLocked(bool color_clear_follows) {
   }
 
   BuildGuestScaleCopiesLocked(s);
-  BuildFxaaCopyLocked(s);
   TransitionResolveSources(s, rt, ds);
 
   // MRT slot 1, when it can pair with rt (see VideoState::render_target1).

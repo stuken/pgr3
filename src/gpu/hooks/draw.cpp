@@ -629,6 +629,7 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const DrawArgs &args) {
   }
   g_stats.recorded.fetch_add(1, std::memory_order_relaxed);
   CountRenderTarget();
+  pgr3::gpu::FxaaAfterCompositeLocked(s);
 }
 
 u32 D3DDevice_DrawVertices_hook(u32 device, u32 primitive_type,
@@ -870,6 +871,7 @@ void FlushPendingUP() {
   } else {
     s.command_list->drawInstanced(p.vertex_count, 1, 0, 0);
   }
+  pgr3::gpu::FxaaAfterCompositeLocked(s);
 }
 
 } // namespace

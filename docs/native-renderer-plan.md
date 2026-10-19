@@ -18,7 +18,6 @@ than repeating it. SDK: rexglue 0.10.0.
 | 4. D3D identification (XDK 2099) | **Done.** `config/d3d.toml` names 74 functions, including `BeginTiling`/`EndTiling` and `XPhysicalAlloc`/`Free`. `src/gpu/d3d.h` has the 2099 device and resource layouts, every field checked against PGR3's code. The render setup is confirmed: 1024x600, 2x MSAA, 7e3. See Phase 4 findings. |
 | 5. Native renderer bring-up | **In progress.** rr6's renderer is ported and runs PGR3 on D3D12 and Vulkan from boot through the front end, garage and menus into a London race. The race now has its full scenery: trees, crowd, fences, lane markings and textured buildings. Instanced fetches are pulled in the shader. Rect lists are expanded to quads. Depth resolves feed the shadow maps. Constants the game writes into the ring, and the bool constants, reach the host. MSAA is modelled (2x scene, 4x environment). Open: other cities and modes against xenos. See Phase 5 progress. |
 | 6. Hardening and performance | **In progress.** Race frames hold 60 fps at the default 2x scale; see Phase 6 progress. |
-| 7. Geometry Wars (`gw.xex`) | Out of scope until 5 is done. |
 
 ## What we know about PGR3
 
@@ -83,7 +82,8 @@ over**; every one is re-derived (Phase 4).
   `bb8e5ea^`) and a host format for 7e3 (Phase 4 findings).
 - `gw.xex`: Geometry Wars, a **separate title executable** (LZX-compressed)
   with its own statically linked D3D9 2099 and its own shaders. It is not in
-  `pgr3_manifest.toml`. See Phase 7.
+  `pgr3_manifest.toml`, and the recompiler SDK cannot run a second XEX, so it
+  is out of scope.
 
 ### Phase 0 findings
 
@@ -880,17 +880,21 @@ scenery's fog distance, taken in world space, saturated. Payloads are now
 applied at the next Set*ShaderConstantF or BeginShaderConstantF4 as well, in
 command order.
 
-### Phase 7: Geometry Wars (`gw.xex`)
-
-`gw.xex` links its own D3D, so with `config.graphics = nullptr` it would get no
-GPU at all.
-
-1. Find out how PGR3 starts it (`XLaunchNewImage` vs `XexLoadImage`) and
-   whether the SDK can recompile it as a second module (`dll_targets.cmake`).
-2. Options, in order of cost: leave it unsupported in the native build; run it
-   in a xenos-plugin build; or identify its D3D (same XDK as the main game, so
-   much of `config/d3d.toml` should match by shape) and route it through the
-   same renderer with its own hook set and shader cache.
+**Optional extras.**
+- **FXAA (`pgr3_fxaa`, off by default).** rr6 filtered the input of RR6's
+  grading pass. PGR3's last 3D pass is the final composite (`ps_8200E300`:
+  bloom, exposure, tone map), whose input is HDR, so FXAA runs on its output
+  instead: right after the composite draws the scene target, a single-sample
+  copy of the target (a hardware resolve when it is multisampled) is FXAA'd
+  back into it, before the HUD is drawn on top. It smooths edges and, with
+  MSAA off, the foliage's alpha-to-coverage dither; the HUD stays sharp.
+- **16-bit output (`pgr3_output_16bit`, on by default):** the back buffer
+  stays RGBA16 and Present dithers; off gives BGRA8.
+- **Anisotropy (`pgr3_anisotropy`, 2-16):** forces the level on every linear
+  sampler; 16x visibly sharpens the road into the distance.
+- **Texture dumping and replacement (`pgr3_texture_dump`,
+  `pgr3_texture_replace`):** checked end to end: inverted RGBA8 replacements
+  at twice the size, named by a dump's hash, replaced the menu and HUD fonts.
 
 ---
 

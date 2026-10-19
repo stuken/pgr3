@@ -338,14 +338,20 @@ plume::RenderPipeline *GetOrCreateCopyDepthPipeline(VideoState &s,
 // Get-or-create a copy color pipeline whose RT format matches 'format'.
 // D3DDevice_Resolve targets can be any format, and one pipeline cannot cover
 // all of them, so the pipelines are cached per format.
-plume::RenderPipeline *GetOrCreateResolvePipeline(VideoState &s,
-                                                  plume::RenderFormat format,
-                                                  bool fxaa) {
-  auto &pipelines =
-      fxaa ? s.fxaa_pipelines_by_format : s.resolve_pipelines_by_format;
-  auto it = pipelines.find(format);
-  if (it != pipelines.end())
+plume::RenderPipeline *GetOrCreateResolvePipeline(
+    VideoState &s, plume::RenderFormat format, bool fxaa,
+    plume::RenderSampleCounts samples) {
+  // The FXAA pass draws straight into a (possibly multisampled) scene target,
+  // so its pipelines are keyed by sample count too.
+  const u64 fxaa_key = (u64(format) << 8) | u64(samples);
+  if (fxaa) {
+    if (auto it = s.fxaa_pipelines_by_format.find(fxaa_key);
+        it != s.fxaa_pipelines_by_format.end())
+      return it->second.get();
+  } else if (auto it = s.resolve_pipelines_by_format.find(format);
+             it != s.resolve_pipelines_by_format.end()) {
     return it->second.get();
+  }
   plume::RenderGraphicsPipelineDesc desc;
   desc.pipelineLayout = s.pipeline_layout.get();
   desc.vertexShader = s.copy_vs.get();
@@ -359,12 +365,16 @@ plume::RenderPipeline *GetOrCreateResolvePipeline(VideoState &s,
   desc.renderTargetFormat[0] = format;
   desc.renderTargetBlend[0] = plume::RenderBlendDesc::Copy();
   desc.depthTargetFormat = plume::RenderFormat::UNKNOWN;
+  desc.multisampling.sampleCount = samples;
   auto pipeline = CreateHostGraphicsPipeline(s.device.get(), desc,
                                              fxaa ? "fxaa" : "resolve");
   if (!pipeline)
     return nullptr;
   auto *raw = pipeline.get();
-  pipelines.emplace(format, std::move(pipeline));
+  if (fxaa)
+    s.fxaa_pipelines_by_format.emplace(fxaa_key, std::move(pipeline));
+  else
+    s.resolve_pipelines_by_format.emplace(format, std::move(pipeline));
   return raw;
 }
 

@@ -68,8 +68,6 @@ struct GuestTexture {
   // This texture box-filtered down to a lower-scale target's resolution, for
   // draws into that target (BuildGuestScaleCopiesLocked).
   std::unique_ptr<GuestTexture> guestScaleCopy;
-  // This texture FXAA'd, for the colour grading pass (BuildFxaaCopyLocked).
-  std::unique_ptr<GuestTexture> fxaaCopy;
   u32 resolveLevel = 0;
   u32 resolveFace = 0;
   bool registered = false;
