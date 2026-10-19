@@ -889,6 +889,17 @@ stays 1:1. A depth-only pass already takes its viewport scale from the depth
 surface. At the default render scale of 2 the player's map is 2048x2048;
 the shadow edges lose their stair-steps, and race frame times are unchanged.
 
+**Magenta textures while a course streams (fixed, checked in play).** Some
+surfaces showed a magenta texture with detail for a while before the right
+one appeared: a DXT5 normal map (flat magenta colour blocks, detail in the
+alpha) in a diffuse slot. Textures stream into memory that earlier ones held,
+and a tiled texture's mirror was built once and kept until its fetch constant
+changed or its memory was freed, so one built before its texels landed kept
+the old contents. Tiled textures now join the mirror signature through a
+sparse texel hash (64 16-byte samples over the base level and mips, once a
+frame), as linear ones already did with a full hash: about 0.03 ms a frame,
+with the rebuild rate unchanged.
+
 **Optional extras.**
 - **FXAA (`pgr3_fxaa`, off by default).** rr6 filtered the input of RR6's
   grading pass. PGR3's last 3D pass is the final composite (`ps_8200E300`:
