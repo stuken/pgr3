@@ -8,7 +8,9 @@
 // (gpu/d3d.h, config/d3d.toml).
 
 #include <atomic>
+#include <string>
 
+#include <rex/cvar.h>
 #include <rex/hook.h>
 #include <rex/system/xmemory.h>
 #include <rex/runtime.h>
@@ -21,6 +23,11 @@
 #include "gpu/device.h"
 #include "gpu/native_texture_mirror.h"
 
+REXCVAR_DECLARE(std::string, pgr3_dump_frames);
+REXCVAR_DECLARE(int32_t, pgr3_trace_frame);
+REXCVAR_DECLARE(std::string, pgr3_input_script);
+REXCVAR_DECLARE(int32_t, pgr3_perf_stats);
+
 namespace pgr3::gpu {
 void NoteDefaultSurfaces(u32 back_buffer, u32 depth);
 void AdvanceGuestBufferFrame();
@@ -29,6 +36,14 @@ bool TraceFrameActive();
 } // namespace pgr3::gpu
 
 namespace {
+
+// Whether a debugging tool that names present frames is on.
+bool FrameNumbersWanted() {
+  return !REXCVAR_GET(pgr3_dump_frames).empty() ||
+         REXCVAR_GET(pgr3_trace_frame) > 0 ||
+         !REXCVAR_GET(pgr3_input_script).empty() ||
+         REXCVAR_GET(pgr3_perf_stats) > 0;
+}
 
 // Nothing consumes the guest's PM4 ring: every guest D3D function still
 // running unhooked writes its packets here and D3D__MakeSpace rewinds them.
@@ -182,9 +197,9 @@ u32 D3DDevice_Swap_hook(u32 /*device*/, u32 front_buffer) {
     PGR3_INFO("D3DDevice_Swap: first frame (front buffer 0x{:08X})", front_buffer);
   if (s_presents == 60 || (s_presents % 600) == 0)
     pgr3::gpu::LogDrawStats(s_presents);
-  // Places log lines on the present count pgr3_trace_frame and
-  // pgr3_dump_frames take.
-  if (s_presents % 300 == 0)
+  // Places log lines on the present count pgr3_trace_frame, pgr3_dump_frames
+  // and pgr3_input_script take, while one of the tools that uses it is on.
+  if (s_presents % 300 == 0 && FrameNumbersWanted())
     PGR3_INFO("present {}", s_presents);
   pgr3::gpu::Video::Present(pgr3::gpu::FindResolveTarget(front_buffer));
   pgr3::gpu::AdvanceGuestBufferFrame();

@@ -46,6 +46,8 @@ u32 PresentCount();
 }
 #else
 REX_EXTERN(__imp__D3DDevice_Swap);
+REXCVAR_DECLARE(std::string, pgr3_dump_frames);
+REXCVAR_DECLARE(int32_t, pgr3_trace_frame);
 
 namespace {
 std::atomic<u32> g_presents{0};
@@ -55,7 +57,10 @@ void Pgr3XenosDumpOnPresent(); // platform/xenos_resolve_dump.cpp
 
 REX_HOOK_RAW(D3DDevice_Swap) {
   const u32 n = g_presents.fetch_add(1, std::memory_order_relaxed) + 1;
-  if (n % 300 == 0)
+  // Only while a tool that names present frames is on.
+  if (n % 300 == 0 && (!REXCVAR_GET(pgr3_input_script).empty() ||
+                       !REXCVAR_GET(pgr3_dump_frames).empty() ||
+                       REXCVAR_GET(pgr3_trace_frame) > 0))
     PGR3_INFO("pgr3_input_script: present {}", n);
   Pgr3XenosDumpOnPresent();
   __imp__D3DDevice_Swap(ctx, base);
