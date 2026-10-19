@@ -53,7 +53,10 @@ REXCVAR_DEFINE_STRING(pgr3_debug_fill_depth_resolve, "", kCvarGroup,
                       "texture memory with this 32-bit value (hex), as if the "
                       "GPU had written it back");
 REXCVAR_DEFINE_INT32(pgr3_trace_vs_records, 8, kCvarGroup,
-                     "How many records of streams 0 and 1 pgr3_trace_vs dumps");
+                     "How many vertices pgr3_trace_vs dumps per draw: the first N "
+                     "indices' records of streams 0 and 1");
+REXCVAR_DEFINE_INT32(pgr3_trace_vs_draws, 8, kCvarGroup,
+                     "How many draws per frame pgr3_trace_vs dumps inputs for");
 REXCVAR_DEFINE_STRING(pgr3_debug_skip_vs, "", kCvarGroup,
                       "Bring-up experiment: skip draws whose vertex shader hash "
                       "(hex, as pgr3_trace_frame prints it) is in this comma list");
@@ -65,6 +68,7 @@ REX_EXTERN(__imp__D3DDevice_DrawVerticesUP);
 namespace pgr3::gpu {
 u32 PresentCount();
 u32 BoundRenderTargetVa();
+void ApplyGuestWrittenConstants(u32 device_guest);
 }
 
 namespace {
@@ -379,8 +383,10 @@ bool TracedVertexShader() {
          std::format("{:016X}", vs->shaderCacheEntry->hash) == wanted;
 }
 
-// pgr3_trace_vs: every non-zero VS constant of the draw, and the first
-// records of streams 0 and 1 as raw dwords, to evaluate a shader by hand.
+// pgr3_trace_vs: every non-zero VS constant of the draw, and the records of
+// streams 0 and 1 that its first indices reach, as raw dwords keyed by vertex
+// index (index + base vertex, the r0.x the shader sees), to evaluate a shader
+// by hand.
 void TraceVertexShaderInputs(const D3DDevice &dev, const DrawArgs &args) {
   const std::string &wanted = REXCVAR_GET(pgr3_trace_vs);
   if (wanted.empty())
@@ -393,6 +399,13 @@ void TraceVertexShaderInputs(const D3DDevice &dev, const DrawArgs &args) {
   }
   if (!vs || !vs->shaderCacheEntry ||
       std::format("{:016X}", vs->shaderCacheEntry->hash) != wanted)
+    return;
+  static u32 s_frame = 0, s_draws = 0;
+  if (s_frame != pgr3::gpu::PresentCount()) {
+    s_frame = pgr3::gpu::PresentCount();
+    s_draws = 0;
+  }
+  if (s_draws++ >= u32(std::max(REXCVAR_GET(pgr3_trace_vs_draws), 0)))
     return;
   std::string consts;
   for (u32 c = 0; c < 256; ++c) {
@@ -407,17 +420,61 @@ void TraceVertexShaderInputs(const D3DDevice &dev, const DrawArgs &args) {
             "consts{}",
             args.indexed, args.baseVertexIndex, args.startVertex,
             args.startIndex, consts);
+  std::string ps_consts;
+  for (u32 c = 0; c < 256; ++c) {
+    const auto &v = dev.psFloatConstants[c];
+    const float f[4] = {float(v[0]), float(v[1]), float(v[2]), float(v[3])};
+    if (f[0] == 0 && f[1] == 0 && f[2] == 0 && f[3] == 0)
+      continue;
+    ps_consts += std::format(" c{}=({:.6g},{:.6g},{:.6g},{:.6g})", c, f[0], f[1],
+                             f[2], f[3]);
+  }
+  std::string bools;
+  for (u32 i = 0; i < 8; ++i)
+    bools += std::format(" {:08X}", u32(dev.boolConstants[i]));
+  PGR3_INFO("[trace]   ps-input bools{} consts{}", bools, ps_consts);
+  // The vertices the first indices reach.
+  const u32 count = std::min(u32(std::max(REXCVAR_GET(pgr3_trace_vs_records), 1)),
+                             args.vertexOrIndexCount);
+  std::vector<u32> vertices;
+  if (const auto *ib = pgr3::mem::at<const D3DIndexBuffer>(dev.indexBuffer);
+      args.indexed && dev.indexBuffer && ib) {
+    const bool index32 =
+        (u32(ib->resource.Common) & pgr3::gpu::kCommonIndex32) != 0;
+    const u32 size = index32 ? 4u : 2u;
+    if (u64(args.startIndex + count) * size <= u32(ib->Size)) {
+      const auto *src = pgr3::mem::at<const u8>(u32(ib->Address) + args.startIndex * size);
+      for (u32 i = 0; src && i < count; ++i)
+        vertices.push_back(
+            (index32 ? u32(reinterpret_cast<const be_u32 *>(src)[i])
+                     : u32(u16(reinterpret_cast<const be_u16 *>(src)[i]))) +
+            args.baseVertexIndex);
+    }
+  } else if (!args.indexed) {
+    for (u32 i = 0; i < count; ++i)
+      vertices.push_back(args.startVertex + i);
+  }
+  std::string list;
+  for (u32 v : vertices)
+    list += std::format(" {}", v);
+  PGR3_INFO("[trace]   vs-input vertices{}", list);
+  std::sort(vertices.begin(), vertices.end());
+  vertices.erase(std::unique(vertices.begin(), vertices.end()), vertices.end());
   for (u32 stream = 0; stream < 2; ++stream) {
     const u32 stride = u32(dev.streamStrides[stream]) * 4;
     const auto *vb = pgr3::mem::at<const D3DVertexBuffer>(dev.streams[stream][1]);
     if (!vb || !dev.streams[stream][1] || !stride)
       continue;
     const u32 base = (u32(vb->Fetch0) & ~0x3u) + dev.streams[stream][0];
-    const auto *w = pgr3::mem::at<const be_u32>(base);
     std::string records;
-    const u32 count = u32(std::max(REXCVAR_GET(pgr3_trace_vs_records), 1));
-    for (u32 i = 0; w && i < count * stride / 4; ++i)
-      records += std::format("{}{:08X}", i % (stride / 4) ? " " : " | ", u32(w[i]));
+    for (u32 v : vertices) {
+      const auto *w = pgr3::mem::try_at<const be_u32>(base + v * stride);
+      if (!w)
+        continue;
+      records += std::format(" | @{}", v);
+      for (u32 i = 0; i < stride / 4; ++i)
+        records += std::format(" {:08X}", u32(w[i]));
+    }
     PGR3_INFO("[trace]   vs-input stream{} stride={} at 0x{:08X}{}", stream,
               stride, base, records);
   }
@@ -430,6 +487,8 @@ void DispatchDraw(u32 device_guest, u32 primitive_type, const DrawArgs &args) {
   if (!dev || !args.vertexOrIndexCount)
     return;
   g_stats.issued.fetch_add(1, std::memory_order_relaxed);
+  // Before the trace, so it shows what the draw will use.
+  pgr3::gpu::ApplyGuestWrittenConstants(device_guest);
   if (TracingThisFrame() && TracedVertexShader()) {
     TraceDraw(args.indexed ? "DrawIndexed" : "Draw", *dev, primitive_type,
               args.vertexOrIndexCount);

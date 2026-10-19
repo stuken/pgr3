@@ -246,7 +246,15 @@ struct D3DDevice {
   DeviceFetchConstant fetchConstants[32]; // +0x480  D3DDevice_SetTexture
   be_f32 vsFloatConstants[256][4];        // +0x780  SetVertexShaderConstantF
   be_f32 psFloatConstants[256][4];        // +0x1780 SetPixelShaderConstantF
-  u8 pad_2780[0x2C90 - 0x2780];
+  // The bool and loop constants, in register order (SHADER_CONSTANT_BOOL
+  // 0x4900-0x4907, then LOOP 0x4908-0x4927), as the draw-time flush
+  // (sub_823DE880) uploads them. Bool register n of the unified file (VS
+  // b0-b127, then PS b0-b127, as the shaders' BOOL_BIT reads it) is bit
+  // n % 32 of dword n / 32. Only D3DDevice_SetPixelShaderConstantB writes
+  // them in PGR3.
+  be_u32 boolConstants[8];  // +0x2780
+  be_u32 loopConstants[32]; // +0x27A0
+  u8 pad_2820[0x2C90 - 0x2820];
   be_u32 vertexDeclaration; // +0x2C90  D3DDevice_SetVertexDeclaration
   u8 pad_2C94[0x2CB8 - 0x2C94];
   // Blend as set through D3DRS (SRCBLEND..BLENDOPALPHA), applied to the four
@@ -333,6 +341,7 @@ static_assert(offsetof(D3DDevice, m_GetSamplerStateCall) == 0x3B8);
 static_assert(offsetof(D3DDevice, fetchConstants) == 0x480);
 static_assert(offsetof(D3DDevice, vsFloatConstants) == 0x780);
 static_assert(offsetof(D3DDevice, psFloatConstants) == 0x1780);
+static_assert(offsetof(D3DDevice, boolConstants) == 0x2780);
 static_assert(offsetof(D3DDevice, vertexDeclaration) == 0x2C90);
 static_assert(offsetof(D3DDevice, blendFlags) == 0x2CBC);
 static_assert(offsetof(D3DDevice, paScWindowScissorTL) == 0x2D04);

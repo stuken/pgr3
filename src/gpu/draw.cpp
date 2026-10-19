@@ -29,6 +29,8 @@
 #include "gpu/pipeline/pso_recorder.h"
 
 namespace pgr3::gpu {
+
+void ApplyGuestWrittenConstants(u32 device_guest); // hooks/constants.cpp
 u32 PresentCount();
 namespace {
 
@@ -215,6 +217,11 @@ void ReadDeviceRenderState(VideoState &s, u32 device_guest) {
                          !REXCVAR_GET(pgr3_debug_alpha_test_off));
   Video::SetAlphaTestFunc(color & 0x7u);
   Video::SetAlphaThreshold(static_cast<float>(dev->rbAlphaRef));
+  // ALPHA_TO_MASK_ENABLE. PGR3's foliage cards rely on it, with the alpha
+  // test off, to cut leaves out on the 2x MSAA scene target. The host's own
+  // alpha to coverage still cuts at one sample. The per-quad dither offsets
+  // (bits 24-31) are not modelled.
+  Video::SetDirtyValue(dirty, ps.enableAlphaToCoverage, (color & 0x10u) != 0);
 }
 } // namespace
 
@@ -328,6 +335,8 @@ bool Video::FlushRenderStateLocked(u32 device_guest) {
   s.dirtyStates.vertexShaderConstants = true;
   s.dirtyStates.pixelShaderConstants = true;
   if (device_guest) {
+    // Constants the game wrote into the ring (world matrices among them).
+    ApplyGuestWrittenConstants(device_guest);
     if (s.dirtyStates.vertexShaderConstants) {
       auto vs_alloc = UploadVertexShaderConstants(device_guest);
       if (vs_alloc.size) {

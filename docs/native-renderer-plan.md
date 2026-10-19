@@ -7,7 +7,7 @@ than repeating it. SDK: rexglue 0.10.0.
 
 ---
 
-## Status (2026-10-18)
+## Status (2026-10-19)
 
 | Phase | State |
 |---|---|
@@ -16,7 +16,7 @@ than repeating it. SDK: rexglue 0.10.0.
 | 2. XenosRecomp | **Done.** All 309 shaders compile to DXIL and SPIR-V with `REBLUE_RECOMP PGR3_RECOMP`, on branch `pgr3` of the fork in `thirdparty/XenosRecomp` (uncommitted). RR6's 176 still compile, and their HLSL changes only as intended. See Phase 2 findings. |
 | 3. Build integration | **Done.** Both configurations build. Every build makes the shader cache; `PGR3_NATIVE_GPU=ON` builds `pgr3.exe` (D3D12) and `pgr3_vk.exe` (Vulkan) on plume with the cache and 548 prelinked variants. Until Phase 5 they log that the renderer is missing and exit. |
 | 4. D3D identification (XDK 2099) | **Done.** `config/d3d.toml` names 74 functions, including `BeginTiling`/`EndTiling` and `XPhysicalAlloc`/`Free`. `src/gpu/d3d.h` has the 2099 device and resource layouts, every field checked against PGR3's code. The render setup is confirmed: 1024x600, 2x MSAA, 7e3. See Phase 4 findings. |
-| 5. Native renderer bring-up | **In progress.** rr6's renderer is ported and runs PGR3 on D3D12 from boot through the front end, garage and menus into a London race: course, buildings and cars render, with the HUD. Instanced fetches are pulled in the shader. Rect lists are expanded to quads. Depth resolves feed the shadow maps. Open: MSAA, post effects, some texture formats. See Phase 5 progress. |
+| 5. Native renderer bring-up | **In progress.** rr6's renderer is ported and runs PGR3 on D3D12 and Vulkan from boot through the front end, garage and menus into a London race. The race now has its full scenery: trees, crowd, fences, lane markings and textured buildings. Instanced fetches are pulled in the shader. Rect lists are expanded to quads. Depth resolves feed the shadow maps. Constants the game writes into the ring, and the bool constants, reach the host. Open: MSAA, post effects, some texture formats. See Phase 5 progress. |
 | 6. Hardening and performance | Not started. |
 | 7. Geometry Wars (`gw.xex`) | Out of scope until 5 is done. |
 
@@ -668,73 +668,73 @@ their depth plane.
 - **Supporting changes:** `R32_FLOAT` joined the render-target whitelist, and
   `pgr3_dump_frames` writes it as grey.
 
-**Missing scenery (under investigation).** Against xenos on the same London
-stretch (the starting grid and the Embankment), the native race lacks:
-- the 3D trees, fences, the crowd, lane markings and cones;
-- textures on the buildings beside the road, which come out as flat colour
-  blocks.
+**Missing scenery (fixed).** Against xenos on the same London stretch (the
+starting grid and the Embankment), the native race lacked the 3D trees, fences,
+the crowd, lane markings and cones, and the buildings beside the road came out
+as flat colour blocks. There were three causes:
+- **World matrices written into the ring.** `D3DDevice_BeginShaderConstantF4`
+  (`sub_823D8E08`, `(device, pixel, start, count)`) reserves a `SET_CONSTANT`
+  packet in the ring and returns its payload; the caller writes the float4s
+  itself. The device's constant shadow, which the host uploads, never sees
+  them. PGR3 sends every scene object's world matrices this way: VS c0-c3
+  (`g_mWorld`) from `sub_82249D70`, and c0-c3 plus c64-c67
+  (`g_mWeightedWorld`) from `sub_82246730`. `sub_82279B78` sends VS c52+
+  and PS c20+ the same way. The shadow kept an identity `g_mWorld`, so the
+  scenery VS (`vs_820B25A8`, the roadside walls, and the rest) drew every
+  object at the world origin, which the camera saw at NDC (-5.6, -4.1).
+  `hooks/constants.cpp` now notes each call, and the next draw copies the
+  payloads, still intact in the discard ring, into the shadow.
+- **Bool constants.** The host uploaded them as zero, since rr6's shaders had
+  none. The device keeps the bool file at `+0x2780` (8 dwords, then 32 loop
+  dwords, as the draw-time flush `sub_823DE880` uploads registers
+  `0x4900`-`0x4927`). The only writer, `sub_823CA040`, starts at dword
+  `0x2790`, so it is `D3DDevice_SetPixelShaderConstantB` (PS b*n* is bit
+  128+*n*); nothing sets VS bools. The foliage and building pixel shader
+  `ps_820B4100` takes the diffuse map when `g_textureSet_0` (PS b0) is set,
+  and otherwise samples the building crop sheet: on the foliage cards that
+  gave the grey squares.
+- **Alpha to coverage.** The foliage cards have `ALPHA_TO_MASK_ENABLE` set
+  (`RB_COLORCONTROL` `0x87000016`) with the alpha test off; on the 2x MSAA
+  target that cuts the leaves out. The bit now enables the host's own alpha to
+  coverage, which also cuts at one sample. The per-quad dither offsets (bits
+  24-31) are not modelled.
 
-What is settled:
+Settled along the way:
 - **xenos references need `--readback_resolve=full`.** Without it the xenos
-  dump tool reads resolve memory that is never written, and every dump is
-  noise or black. That flag, not a broken xenos build, explains the bad
-  references earlier in this session. Use the Phase 4 script
+  dump tool reads resolve memory that is never written. Use the Phase 4 script
   (`start@1500,a@2100,a@2700..4800,rt@...`): the race loads at about present
-  4530 and the countdown runs to about 4900. `pgr3_dump_frames` now also
-  decodes `k_6_5_5`.
+  4530 and the countdown runs to about 4900. `pgr3_dump_frames` also decodes
+  `k_6_5_5`.
 - **The resolve alias lost the crowd impostor atlas (fixed).** The 512x192
-  texture `0x40396320` (xenos `0x4041E320`, `k_6_5_5`) is the crowd impostor
-  atlas, baked once while the course loads:
-  - `vs_820C2DB8` draws it with `ps_820BC830`, which writes material slot,
-    U and V;
-  - the sprite pixel shader `ps_820BC970` decodes it.
+  `k_6_5_5` texture `0x40396320` is baked once while the course loads
+  (`vs_820C2DB8` with `ps_820BC830`) and decoded by the sprite shader
+  `ps_820BC970`. Resolve aliasing skipped the copy, so `pgr3_resolve_alias`
+  now defaults to off.
+- **The game submits the same scenery in both builds** (`pgr3_scenery_probe`
+  on the draw loop `sub_8220D0B8` and its material setup `sub_82208C28`).
+  Occlusion queries, fences and CPU reads of depth resolves were ruled out as
+  gates.
 
-  Resolve aliasing skipped the copy, so the destination was never written
-  and came back as stale video memory. `pgr3_resolve_alias` now defaults to
-  off, and the atlas matches xenos.
-- **The game submits the same scenery in both builds.** `pgr3_scenery_probe`
-  hooks the scenery draw loop `sub_8220D0B8` and its material setup
-  `sub_82208C28` in both builds. They agree to within 0.1%: about 12 calls a
-  frame, 77% of object records visible, every material setup succeeding.
-  Ruled out as gates:
-  - occlusion queries (`pgr3_debug_occlusion_samples` at 0 or 1000 changes
-    nothing);
-  - fences (the native fence is always 0, so never pending);
-  - CPU reads of depth resolves (`pgr3_debug_fill_depth_resolve` changes
-    nothing).
-- **Their geometry never lands on screen.** `pgr3_debug_solid_vs` (now a
-  list, cycling every `pgr3_debug_solid_cycle` frames) paints each scene VS
-  magenta in turn on the Embankment:
-  - visible: the skyline `CB1B81A2` (`vs_820B3090`), the road `083E7FC7`, car
-    parts `84EC1F77`/`69082D7B`/`2952D8FC`, and the HUD `368A21C8`;
-  - no magenta pixels: `7BDFF0AF34C9EEA3` (`vs_820B25A8`, about 710 draws a
-    frame, IA-fed: POSITION0, NORMAL0-2, TEXCOORD0-1, COLOR0, BLENDWEIGHT0)
-    and the pulled instanced `CAFD4C8595F5CD6B` (`vs_820C4738`, about 500).
-  Those two carry the missing scenery: submitted, but placed off screen,
-  degenerate, or failing depth.
-- **Tools added:** `scratch/vsemu.py` evaluates a recompiled VS on
-  `pgr3_trace_vs` dumps (`pgr3_trace_vs_records` sets how many records), and
-  `scratch/sprites.py` sizes every tree sprite of a frame.
-
-**Next:** trace `7BDFF0AF34C9EEA3` (`pgr3_trace_vs`) on the starting grid and
-evaluate it with `vsemu.py`:
-- decide whether the decoded inputs or the constants give off-screen
-  positions;
-- check its BLENDWEIGHT and the NORMAL1/NORMAL2 formats, the first users of
-  those paths;
-- compare the same draw's constants against xenos, by adding a constant dump
-  to the xenos trace.
-
-Then the same for `vs_820C4738`'s near instances (only far instances were
-checked).
+**Tools:**
+- `pgr3_trace_vs` now dumps the records the draw's first indices reach, keyed
+  by vertex index (`pgr3_trace_vs_records` indices, for up to
+  `pgr3_trace_vs_draws` draws a frame), plus the PS constants and the bool
+  file.
+- `scratch/vsemu.py` runs flow-control shaders (`switch (pc)`) and reads
+  undeclared inputs as the host's zero slot. `scratch/vsemu_survey.py` gives
+  each traced draw's NDC extent.
+- Other bring-up switches: `pgr3_debug_solid_vs` (a list, cycling every
+  `pgr3_debug_solid_cycle` frames), `pgr3_debug_occlusion_samples`,
+  `pgr3_debug_fill_depth_resolve`, `scratch/sprites.py`.
 
 **Open, in rough order of what is visible in a race:**
-1. **Missing scenery,** above.
-2. **MSAA.** The scene is 2x MSAA and the environment passes 4x; the host
-   renders everything at 1x.
+1. **MSAA.** The scene is 2x MSAA and the environment passes 4x; the host
+   renders everything at 1x. Alpha to coverage then has one sample, so the
+   foliage edges are hard.
+2. **A side-by-side check of the race against the xenos references,** now that
+   the scenery is in, then the other cities and night races.
 3. **Remaining textures:** linear volume textures (64x64x32 `k_8_8_8_8`).
-4. **The garage preview is overexposed,** and the race needs checking against
-   the xenos references once 1-3 are in; the bloom target stays black.
+4. **The garage preview is overexposed,** and the bloom target stays black.
 5. The Vulkan exe has had no validation-layer pass.
 
 ### Phase 6: Hardening and performance

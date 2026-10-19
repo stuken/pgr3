@@ -22,7 +22,9 @@
 #
 # Beyond rr6: D3DDevice_BeginTiling/EndTiling (predicated tiling; used in the
 # front end, not in races), the query API (D3DDevice_CreateQuery, D3DQuery_*),
-# and XPhysicalAlloc/XPhysicalFree. PGR3 also overrides XMemAlloc and
+# XPhysicalAlloc/XPhysicalFree, D3DDevice_BeginShaderConstantF4 (constants
+# written straight into the ring) and D3DDevice_SetPixelShaderConstantB (the
+# bool file at +0x2780). PGR3 also overrides XMemAlloc and
 # XMemFree: the D3D library allocates through sub_8219A778 and frees through
 # sub_8219A170, so the XMemAlloc/XMemFree named here are the unused XDK
 # defaults.
@@ -44,6 +46,7 @@
 0x823C53F8 = { name = "XPhysicalFree" } # MmFreePhysicalMemory (also called by Swap)
 0x823C9DB0 = { name = "D3DDevice_SetVertexShaderConstantF" }
 0x823C9EF8 = { name = "D3DDevice_SetPixelShaderConstantF" }
+0x823CA040 = { name = "D3DDevice_SetPixelShaderConstantB" } # (dev, start, BOOL*, count): bit start+128 of the bool file at +0x2780
 0x823CA098 = { name = "D3DPixelShader_Release" } # called by SetPixelShader
 0x823CA150 = { name = "D3DVertexShader_Release" } # called by SetVertexShader
 0x823CA208 = { name = "D3DDevice_SetPixelShader" }
@@ -112,6 +115,7 @@
 0x823D6288 = { name = "D3DQuery_GetData" } # (query, data, size, flags): four DWORD counts for occlusion; S_OK 0, S_FALSE 1
 0x823D85A8 = { name = "D3DDevice_BeginTiling" } # (dev, flags, count, rects, color, z f1, stencil r9); count at +0x32AC, rects from +0x32B0
 0x823D88D0 = { name = "D3DDevice_EndTiling" } # resolves each tile; called with BeginTiling from sub_821D78A8
+0x823D8E08 = { name = "D3DDevice_BeginShaderConstantF4" } # (dev, pixel, start, count) -> payload in the ring (SET_CONSTANT 0x2D)
 0x823D8EA0 = { name = "D3D__FlushCachedRange" }
 0x823DC6A0 = { name = "D3D__InitializeStateTables" }
 0x823DCB78 = { name = "D3DDevice_Initialize" }

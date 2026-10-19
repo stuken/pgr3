@@ -183,8 +183,6 @@ void Video::SetAlphaTestMode(bool enable) {
   if (enable)
     specConstants |= kSpecConstantAlphaTest;
 
-  SetDirtyValue<bool>(s.dirtyStates.pipelineState,
-                      s.pipelineState.enableAlphaToCoverage, false);
   SetDirtyValue<u32>(s.dirtyStates.pipelineState, s.pipelineState.specConstants,
                      specConstants);
 }

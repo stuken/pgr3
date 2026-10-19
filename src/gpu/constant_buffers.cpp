@@ -414,11 +414,15 @@ ConstantAllocation UploadSharedConstants(u32 device_guest) {
     }
   }
 
-  // Shader bool constants. No RR6 shader declares one (every CTAB is float4
-  // and sampler only), so the register file stays clear and the device's
-  // bool shadow is never located.
-  for (u32 i = 0; i < 8; ++i)
-    s.shared.booleansArr[i] = 0u;
+  // Shader bool constants, from the device's shadow of the unified file.
+  // RR6's shaders declared none; PGR3's pixel shaders select texture paths
+  // with them (ps_820B4100's g_textureSet_0 picks the diffuse map over the
+  // building crop sheet).
+  {
+    const auto *bools = pgr3::mem::at<const D3DDevice>(device_guest);
+    for (u32 i = 0; i < 8; ++i)
+      s.shared.booleansArr[i] = bools ? u32(bools->boolConstants[i]) : 0u;
+  }
 
   s.shared.alphaThreshold = pgr3::gpu::Video::AlphaThreshold();
   s.shared.alphaTestFunc = pgr3::gpu::Video::AlphaTestFunc();
