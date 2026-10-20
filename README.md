@@ -63,7 +63,7 @@ clang --version
 ### 2. Clone pgr3 and add the game files
 
 ```bat
-git clone --recursive <this repository's URL> pgr3
+git clone --recursive https://github.com/stuken/pgr3.git
 cd pgr3
 ```
 
