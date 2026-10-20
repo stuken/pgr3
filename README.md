@@ -13,7 +13,7 @@ pgr3 rebuilds Project Gotham Racing 3 (Xbox 360) as a native PC program using st
 pgr3 has two renderers. You pick one when you configure the build.
 
 - **xenos plugin** (`PGR3_NATIVE_GPU=OFF`, the default). This is the SDK's Xenia-derived GPU emulation. It is the reference that the native renderer is checked against.
-- **Native renderer** (`PGR3_NATIVE_GPU=ON`). This replaces the game's Direct3D library with a renderer built on [plume](https://github.com/renderbag/plume), ported from [rr6](https://github.com/stuken/rr6) and before that from re:Blue. The game's Xenos shaders are recompiled at build time with [XenosRecomp](https://github.com/hedge-dev/XenosRecomp) and embedded in the executable. On Windows this builds two executables from one tree:
+- **Native renderer** (`PGR3_NATIVE_GPU=ON`). This replaces the game's Direct3D library with a renderer built on [plume](https://github.com/renderbag/plume), ported from [rr6](https://github.com/stuken/rr6) and before that from [re:Blue](https://github.com/zolaware/reblue). The game's Xenos shaders are recompiled at build time with [XenosRecomp](https://github.com/hedge-dev/XenosRecomp) and embedded in the executable. On Windows this builds two executables from one tree:
   - `pgr3.exe`: Direct3D 12.
   - `pgr3_vk.exe`: Vulkan.
 
@@ -196,6 +196,15 @@ These are for working on the renderer rather than playing.
 | `thirdparty/` | The ReXGlue SDK, plume, XenosRecomp, miniz and zstd. |
 | `docs/` | The native renderer plan and findings. |
 
-## Licences
+## License
 
-The files ported from re:Blue (by way of rr6) carry its BSD 3-Clause licence; see `licenses/reblue-BSD-3-Clause.txt`. The submodules carry their own licences.
+pgr3's own code is under the [BSD Zero Clause License](LICENSE), as rr6's is: use it for anything, with no conditions. The code ported from re:Blue, by way of rr6, stays under re:Blue's BSD 3-Clause License ([licenses/reblue-BSD-3-Clause.txt](licenses/reblue-BSD-3-Clause.txt)), as its file headers say. The submodules and `thirdparty/` keep their own licenses. No license here covers Project Gotham Racing 3 itself.
+
+## Credits
+
+- [re:Blue](https://github.com/zolaware/reblue), whose native renderer this one is ported from, by way of rr6.
+- [rr6](https://github.com/stuken/rr6), the Ridge Racer 6 port this one starts from.
+- The [ReXGlue SDK](https://github.com/rexglue/rexglue-sdk) team, for the recompilation toolchain.
+- [hedge-dev](https://github.com/hedge-dev), for [XenosRecomp](https://github.com/hedge-dev/XenosRecomp) and [Unleashed Recompiled](https://github.com/hedge-dev/UnleashedRecomp).
+- [plume](https://github.com/renderbag/plume), the rendering hardware interface.
+- The [Xenia](https://github.com/xenia-project/xenia) project and the wider Xbox 360 emulation scene.
