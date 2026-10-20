@@ -8,8 +8,10 @@
 
 #include <algorithm>
 #include <atomic>
+#include <format>
 #include <mutex>
 #include <unordered_map>
+#include <vector>
 
 #include <rex/cvar.h>
 #include <rex/hook.h>
@@ -149,6 +151,44 @@ u32 BoundRenderTargetVa() {
   return g_bound_render_target.load(std::memory_order_relaxed);
 }
 
+// The host gives each surface its own texture, but on Xenos surfaces share
+// EDRAM, and a clear writes the tiles of every surface placed there. That is
+// modelled only for a colour clear to zero, which reads as zero in any
+// format, and only for surfaces that lie wholly inside the cleared tiles.
+// PGR3's title screen needs it: the race scene clears its target to the sky
+// colour, the Bink planes then render into surfaces at the same EDRAM base,
+// each cleared to black first, and the menu blends the movie over what that
+// leaves, which on Xenos is black.
+void ClearEdramAliases(u32 cleared_va) {
+  const auto *cleared = pgr3::mem::at<const D3DSurface>(cleared_va);
+  if (!cleared_va || !cleared ||
+      (u32(cleared->resource.Common) & kCommonNoOwnedMemory))
+    return;
+  const u32 base = u32(cleared->EdramInfo) & 0xFFFu;
+  const u32 end = base + u32(cleared->Size) / kEdramTileBytes;
+  std::vector<GuestTexture *> aliases;
+  {
+    std::lock_guard lock(g_mutex);
+    const GuestTexture *cleared_host = nullptr;
+    if (auto it = g_surfaces.find(cleared_va); it != g_surfaces.end())
+      cleared_host = it->second;
+    for (const auto &[va, host] : g_surfaces) {
+      if (va == cleared_va || !host || host == cleared_host ||
+          IsDepthFormat(host->format))
+        continue;
+      const auto *surface = pgr3::mem::at<const D3DSurface>(va);
+      if (!surface || (u32(surface->resource.Common) & kCommonNoOwnedMemory))
+        continue;
+      const u32 first = u32(surface->EdramInfo) & 0xFFFu;
+      const u32 last = first + u32(surface->Size) / kEdramTileBytes;
+      if (last > first && first >= base && last <= end)
+        aliases.push_back(host);
+    }
+  }
+  for (GuestTexture *host : aliases)
+    Video::ClearTexture(host, 0);
+}
+
 // D3DResource_Destroy on a surface. The host surface goes back to the
 // registry, which reissues a free one to the next surface of the same size and
 // format and retires it after it idles, so a surface created later at the
@@ -257,6 +297,17 @@ REX_HOOK_RAW(D3DDevice_SetDepthStencilSurface) {
   const u32 surface_va = ctx.r4.u32;
   __imp__D3DDevice_SetDepthStencilSurface(ctx, base);
   GuestTexture *surface = HostSurface(ctx, base, surface_va);
+  if (pgr3::gpu::TraceFrameActive()) {
+    // Words 12-14 carry the EDRAM base and pitch, as in the Resolve trace.
+    std::string words;
+    if (const auto *w = pgr3::mem::at<const be_u32>(surface_va); w && surface_va)
+      for (int i = 12; i < 15; ++i)
+        words += std::format(" {:08X}", u32(w[i]));
+    PGR3_INFO("[trace] SetDepthStencilSurface 0x{:08X} -> {}x{} host={}:{} lr=0x{:08X}",
+             surface_va, surface ? surface->width : 0,
+             surface ? surface->height : 0, static_cast<const void *>(surface),
+             words, u32(ctx.lr));
+  }
   if (surface && !pgr3::gpu::IsDepthFormat(surface->format))
     surface = nullptr;
   auto &s = pgr3::gpu::state();

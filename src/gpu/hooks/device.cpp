@@ -33,6 +33,8 @@ void NoteDefaultSurfaces(u32 back_buffer, u32 depth);
 void AdvanceGuestBufferFrame();
 void LogDrawStats(u32 frame);
 bool TraceFrameActive();
+u32 BoundRenderTargetVa();
+void ClearEdramAliases(u32 cleared_va);
 } // namespace pgr3::gpu
 
 namespace {
@@ -180,6 +182,35 @@ u32 D3DDevice_Clear_hook(u32 /*device*/, u32 count, u32 rects, u32 flags,
                      i32(r[3]), flags);
   }
   pgr3::gpu::Video::Clear(flags, color, static_cast<float>(z), stencil);
+  if ((flags & pgr3::gpu::kClearTarget) && color == 0)
+    pgr3::gpu::ClearEdramAliases(pgr3::gpu::BoundRenderTargetVa());
+  return 0;
+}
+
+// (device, flags, rect, pColor, Z in f1, stencil in r8; Z's GPR slot is r7,
+// as in Clear). Clear calls it, but PGR3 also calls it directly: the race
+// clears its scene to the fog colour with alpha 1 (sub_8229EFC0, flags 0x3F)
+// after the rear-view mirror has drawn into the scene's top-left corner, and
+// the mirror (sub_8229EDB0) clears depth first. Unhooked, the mirror's
+// corner stayed in the scene and showed as a second mirror. The flags are
+// Clear's: targets in bits 0-3, depth 0x10, stencil 0x20.
+u32 D3DDevice_ClearF_hook(u32 /*device*/, u32 flags, u32 rect, u32 color_va,
+                          f64 z, u32 /*z_gpr_slot*/, u32 stencil) {
+  plume::RenderColor color(0.0f, 0.0f, 0.0f, 0.0f);
+  if (const auto *c = pgr3::mem::at<const be_f32>(color_va); c && color_va)
+    color = plume::RenderColor(c[0], c[1], c[2], c[3]);
+  if (pgr3::gpu::TraceFrameActive())
+    PGR3_INFO("[trace] ClearF flags=0x{:X} color=({:.3g},{:.3g},{:.3g},{:.3g}) z={}",
+              flags, color.r, color.g, color.b, color.a, z);
+  if (rect) {
+    if (const auto *r = pgr3::mem::at<const be_i32>(rect))
+      PGR3_WARN_FIRST(4, "ClearF: rect ignored, {},{}-{},{} flags=0x{:X}",
+                     i32(r[0]), i32(r[1]), i32(r[2]), i32(r[3]), flags);
+  }
+  pgr3::gpu::Video::Clear(flags, color, static_cast<float>(z), stencil);
+  if ((flags & pgr3::gpu::kClearTarget) && color.r == 0.0f && color.g == 0.0f &&
+      color.b == 0.0f && color.a == 0.0f)
+    pgr3::gpu::ClearEdramAliases(pgr3::gpu::BoundRenderTargetVa());
   return 0;
 }
 
@@ -248,5 +279,6 @@ u32 PresentCount() { return g_presents.load(std::memory_order_relaxed); }
 REX_HOOK(D3D__AllocCommandMemory, D3D__AllocCommandMemory_hook);
 REX_HOOK(Direct3D_CreateDevice, Direct3D_CreateDevice_hook);
 REX_HOOK(D3DDevice_Clear, D3DDevice_Clear_hook);
+REX_HOOK(D3DDevice_ClearF, D3DDevice_ClearF_hook);
 REX_HOOK(D3DDevice_Swap, D3DDevice_Swap_hook);
 REX_HOOK(D3D__MakeSpace, D3D__MakeSpace_hook);

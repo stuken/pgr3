@@ -900,6 +900,30 @@ sparse texel hash (64 16-byte samples over the base level and mips, once a
 frame), as linear ones already did with a full hash: about 0.03 ms a frame,
 with the rebuild rate unchanged.
 
+**Duplicated rear-view mirror (fixed).** In the dash and in-car views
+(camera on LB) a second copy of the mirror showed in the scene's top-left
+corner (`duplicated_mirror.rdc`). The mirror (`sub_8229EDB0`) draws into the
+top-left 336x80 of the race surface and resolves that rect into its texture.
+Then the race scene (`sub_8229EFC0`) clears colour, depth and stencil
+through `D3DDevice_ClearF` (flags `0x3F`, the fog colour with alpha 1). The
+game calls ClearF directly in four places, and only `Clear`, which calls it,
+was hooked. So the mirror's depth survived, the sky and distant road failed
+the depth test in the corner, and the mirror's colour stayed. ClearF is now
+hooked, with its float colour passed through unclamped. The scene clear's
+alpha 1 is probably also why xenos resolves the scene with alpha 1
+everywhere (see Motion blur), so the 7e3 alpha workaround on resolve-clears
+may now be redundant.
+
+Hooking ClearF showed a dependence on EDRAM aliasing. On the Press Start screen, before the
+movie's first frame, the background turned the sky colour, where Xenos shows
+black. The race-scene ClearF clears the title's target to the sky colour.
+The Bink planes are then rendered into surfaces at the same EDRAM base, each
+cleared to black first, and the menu blends the movie over what the
+clears leave. A colour clear to zero now also clears every other surface
+lying wholly inside the cleared EDRAM tiles (`ClearEdramAliases`, from
+`EdramInfo` and `Size`). Zero reads as zero in every format, so
+nothing else about EDRAM is modelled.
+
 **Optimisation pass 2.** Measured per draw in a London race (the draw count
 varies from 2,200 to 4,100 a frame between runs and laps, so per-draw cost is
 the comparable number): 3.98 us at the start, 2.4-2.6 us after.

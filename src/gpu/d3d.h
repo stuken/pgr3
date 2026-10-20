@@ -143,6 +143,9 @@ struct D3DSurface {
   be_u32 Unused3C; // +0x3C
 };
 static_assert(sizeof(D3DSurface) == 64);
+
+// One EDRAM tile: 80x16 samples of 32 bits.
+constexpr u32 kEdramTileBytes = 5120;
 static_assert(offsetof(D3DSurface, Format) == 0x10);
 static_assert(offsetof(D3DSurface, Parent) == 0x2C);
 static_assert(offsetof(D3DSurface, SurfaceInfo) == 0x30);

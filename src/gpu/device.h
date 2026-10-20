@@ -62,6 +62,9 @@ public:
   static void OpenCommandListLocked();
 
   static void Clear(u32 flags, u32 color_argb, float depth, u32 stencil);
+  // ClearF's float colour, unclamped for the FP16 host targets.
+  static void Clear(u32 flags, const plume::RenderColor &color, float depth,
+                    u32 stencil);
 
   static void ClearTexture(GuestTexture *texture, u32 color_argb);
 

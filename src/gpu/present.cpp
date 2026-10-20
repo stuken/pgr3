@@ -390,6 +390,11 @@ void RecordOverlayOnlyPass(VideoState &s, plume::RenderTexture *back,
 } // namespace
 
 void Video::Clear(u32 flags, u32 color_argb, float depth, u32 stencil) {
+  Clear(flags, ArgbToRenderColor(color_argb), depth, stencil);
+}
+
+void Video::Clear(u32 flags, const plume::RenderColor &color, float depth,
+                  u32 stencil) {
   auto &s = state();
   std::lock_guard lock(s.mutex);
   s.frame_present_committed = false;
@@ -407,7 +412,7 @@ void Video::Clear(u32 flags, u32 color_argb, float depth, u32 stencil) {
   if (!BindDrawFramebufferLocked(clear_color))
     return;
   if (clear_color)
-    s.command_list->clearColor(0, ArgbToRenderColor(color_argb));
+    s.command_list->clearColor(0, color);
   if (clear_depth || clear_stencil) {
     s.command_list->clearDepthStencil(clear_depth, clear_stencil, depth,
                                       stencil);
