@@ -16,7 +16,7 @@ than repeating it. SDK: rexglue 0.10.0.
 | 2. XenosRecomp | **Done.** All 309 shaders compile to DXIL and SPIR-V with `REBLUE_RECOMP PGR3_RECOMP`, on branch `pgr3` of the fork in `thirdparty/XenosRecomp` (uncommitted). RR6's 176 still compile, and their HLSL changes only as intended. See Phase 2 findings. |
 | 3. Build integration | **Done.** Both configurations build. Every build makes the shader cache; `PGR3_NATIVE_GPU=ON` builds `pgr3.exe` (D3D12) and `pgr3_vk.exe` (Vulkan) on plume with the cache and 548 prelinked variants. Until Phase 5 they log that the renderer is missing and exit. |
 | 4. D3D identification (XDK 2099) | **Done.** `config/d3d.toml` names 74 functions, including `BeginTiling`/`EndTiling` and `XPhysicalAlloc`/`Free`. `src/gpu/d3d.h` has the 2099 device and resource layouts, every field checked against PGR3's code. The render setup is confirmed: 1024x600, 2x MSAA, 7e3. See Phase 4 findings. |
-| 5. Native renderer bring-up | **In progress.** rr6's renderer is ported and runs PGR3 on D3D12 and Vulkan from boot through the front end, garage and menus into a London race. The race now has its full scenery: trees, crowd, fences, lane markings and textured buildings. Instanced fetches are pulled in the shader. Rect lists are expanded to quads. Depth resolves feed the shadow maps. Constants the game writes into the ring, and the bool constants, reach the host. MSAA is modelled (2x scene, 4x environment). Open: other cities and modes against xenos. See Phase 5 progress. |
+| 5. Native renderer bring-up | **In progress.** rr6's renderer is ported and runs PGR3 on D3D12 and Vulkan from boot through the front end, garage and menus into a London race. The race now has its full scenery: trees, crowd, fences, lane markings and textured buildings. Instanced fetches are pulled in the shader. Rect lists are expanded to quads. Depth resolves feed the shadow maps. Constants the game writes into the ring, and the bool constants, reach the host. MSAA is modelled (2x scene, 4x environment). Every city, the night races, replays and movies have been checked against xenos. See Phase 5 progress. |
 | 6. Hardening and performance | **In progress.** Race frames hold 60 fps at the default 2x scale; see Phase 6 progress. |
 
 ## What we know about PGR3
@@ -188,16 +188,16 @@ xenos build, so the reference comes first.
 
 1. **Done:** the xenos build runs from a fresh tree (codegen, reconfigure,
    build) against the SDK install at `c53c48a` (stuken/rexglue-sdk, the
-   commit rr6 pins). **Open:** pin it as the `thirdparty/rexglue-sdk`
-   submodule, as rr6 does.
+   commit rr6 pins), now pinned as the `thirdparty/rexglue-sdk` submodule
+   (Phase 3).
 2. **Done:** tooling ported (see Phase 0 findings), with the frame counter on
    `D3DDevice_Swap` and the dump fixes listed there.
-3. **Partly done:** reference dumps of the main menu and a race start (Gotham
+3. **Done:** reference dumps of the main menu and a race start (Gotham
    Career, Solo Career, the first street race, Medium), kept in `scratch/`.
    The script is
    `start@1500,a@2100,a@2700,...,a@4800` (A every 300 frames), then
-   `rt@4800+N`. **Open:** the garage, a race in each city sunny and night, a
-   replay and a Bink movie. These need menu scripts.
+   `rt@4800+N`. The garage, every city by day and night, replays and the Bink
+   movies were later checked against xenos (Phase 5 and 6).
 4. **Done:** `CMakeLists.txt` now uses `src/pgr3.rc.in`.
 
 **Exit (revised):** a scripted run reaches a race in the xenos build, and its
@@ -367,7 +367,7 @@ the shader set regenerates when the XEX, the patch, the recompiler or
 
 - **Submodules** (`.gitmodules`), each cloned from rr6's local copy with
   `origin` set to the GitHub fork: `thirdparty/XenosRecomp` (branch `pgr3`,
-  `cd59cf1`; **not pushed yet**, so a fresh clone cannot fetch it),
+  pushed to the fork),
   `thirdparty/plume` (`rr6`, `2f9fb4c`, with its four `contrib/`
   submodules), and `thirdparty/rexglue-sdk` (`main`, `c53c48a`, the commit
   rr6 pins and the installed SDK was built from). The SDK checkout is a pin
@@ -795,8 +795,8 @@ everywhere) all matched xenos; the bloom did not:
   scissor, instead of failing over to a whole-surface copy.
 
 **Open, in rough order of what is visible in a race:**
-1. **The other cities and night races,** replays and movies, against xenos.
-   These need menu scripts.
+1. ~~The other cities and night races, replays and movies, against xenos.~~
+   Checked by hand: they match.
 2. ~~The title screen's logo rings are dimmer than on xenos.~~ Not a fault:
    the logo animates (the rings fade in and out), and the two builds were
    caught at different points of the loop.
@@ -972,9 +972,9 @@ rest register reads and dirty tracking).
    Phase 2 step 1 is the cheap early read on how far they differ.
 3. **Runtime shader creation from streamed content.** Largely settled by Phase
    1: 309 shaders (305 in the image, 4 stack-built), all seen at runtime, and
-   no container in the uncompressed data. Modes not yet run (replays, online,
-   other cities) could still create one from a compressed archive; the cache
-   miss warning will show it.
+   no container in the uncompressed data. Online play, not yet run, could
+   still create one from a compressed archive; the cache miss warning will
+   show it.
 4. **The image source.** The build extractor, codegen and runtime must all see
    the patched image. A unit check (extracted count and hashes vs the runtime
    census) should fail the build if they drift.
