@@ -40,3 +40,12 @@ REXLOG_DEFINE_CATEGORY(pgr3)
     if (s_pgr3_warned.fetch_add(1, std::memory_order_relaxed) < (limit))        \
       PGR3_WARN(__VA_ARGS__);                                                   \
   } while (0)
+
+// The same at the debug level, for paths that are modelled but worth seeing
+// while debugging.
+#define PGR3_DEBUG_FIRST(limit, ...)                                            \
+  do {                                                                         \
+    static std::atomic<unsigned> s_pgr3_noted{0};                               \
+    if (s_pgr3_noted.fetch_add(1, std::memory_order_relaxed) < (limit))         \
+      PGR3_DEBUG(__VA_ARGS__);                                                  \
+  } while (0)

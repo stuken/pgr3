@@ -17,7 +17,8 @@ than repeating it. SDK: rexglue 0.10.0.
 | 3. Build integration | **Done.** Both configurations build. Every build makes the shader cache; `PGR3_NATIVE_GPU=ON` builds `pgr3.exe` (D3D12) and `pgr3_vk.exe` (Vulkan) on plume with the cache and 548 prelinked variants. Until Phase 5 they log that the renderer is missing and exit. |
 | 4. D3D identification (XDK 2099) | **Done.** `config/d3d.toml` names 74 functions, including `BeginTiling`/`EndTiling` and `XPhysicalAlloc`/`Free`. `src/gpu/d3d.h` has the 2099 device and resource layouts, every field checked against PGR3's code. The render setup is confirmed: 1024x600, 2x MSAA, 7e3. See Phase 4 findings. |
 | 5. Native renderer bring-up | **In progress.** rr6's renderer is ported and runs PGR3 on D3D12 and Vulkan from boot through the front end, garage and menus into a London race. The race now has its full scenery: trees, crowd, fences, lane markings and textured buildings. Instanced fetches are pulled in the shader. Rect lists are expanded to quads. Depth resolves feed the shadow maps. Constants the game writes into the ring, and the bool constants, reach the host. MSAA is modelled (2x scene, 4x environment). Every city, the night races, replays and movies have been checked against xenos. See Phase 5 progress. |
-| 6. Hardening and performance | **In progress.** Race frames hold 60 fps at the default 2x scale; see Phase 6 progress. |
+| 6. Hardening and performance | **In progress.** Race frames hold 60 fps at 2x scale (the default until Phase 7); see Phase 6 progress. |
+| 7. User-facing polish | **Started.** Renderer diagnostics are at the debug log level (a race logs only the adapter, the scale, the precache summary and the input script's markers), F4 opens a short settings menu (built, not yet checked on screen), and the resolution and shadow scales default to the console's. See Phase 7. |
 
 ## What we know about PGR3
 
@@ -880,7 +881,7 @@ scenery's fog distance, taken in world space, saturated. Payloads are now
 applied at the next Set*ShaderConstantF or BeginShaderConstantF4 as well, in
 command order.
 
-**Shadow resolution (`pgr3_shadow_scale`, default 2).** The car shadows are
+**Shadow resolution (`pgr3_shadow_scale`, default 2 until Phase 7).** The car shadows are
 depth-only passes into a 512x512 (player) or 256x256 (AI) D24FS8 surface,
 each resolved into that car's shadow map. Those surfaces (square, 256 or 512,
 single-sampled) now render at the resolution scale times `pgr3_shadow_scale`,
@@ -957,6 +958,63 @@ rest register reads and dirty tracking).
 - **Texture dumping and replacement (`pgr3_texture_dump`,
   `pgr3_texture_replace`):** checked end to end: inverted RGBA8 replacements
   at twice the size, named by a dump's hash, replaced the menu and HUD fonts.
+
+### Phase 7: User-facing polish
+
+pgr4's Phase 7 (its plan has the reasoning), less the camera work. Neither
+item changes what a frame looks like at the defaults.
+
+1. **Renderer diagnostics at the debug level.** One-off bring-up lines with
+   no diagnostic switch behind them are now `PGR3_DEBUG`:
+   `Direct3D_CreateDevice` (both lines), `D3DDevice_Swap: first frame`,
+   `first resolve into`, `D3DSurface_GetDesc`, `depth surface grows`, both
+   `[output-res]` lines and the shader creation summaries. Output that a
+   diagnostic cvar turns on (`[trace]`, `[perf]`, `pgr3_dump_frames`,
+   `pgr3_input_script`, `pgr3_log_destroy`, the `present N` markers) stays at
+   `PGR3_INFO`, and `PGR3_DEV_*` is unchanged.
+   - **The one `PGR3_WARN_FIRST` a race prints**, "native texture rejected",
+     fired three times on the first race frame, for the scene depth
+     (`k_24_8_FLOAT` 1024x600), the 336x80 rear-view mirror
+     (`k_16_16_16_16_EXPAND`) and the 1x1 adaptation value (`k_16_16_FLOAT`).
+     Each is a resolve destination sampled once before its first resolve
+     (the debug log shows `first resolve into 0x400108A8` 11 ms after its
+     rejection). A tiled texture in a format no mirror takes now logs
+     "before its first resolve" through `PGR3_DEBUG_FIRST` (new in
+     `core/logging.h`); every other rejection still warns.
+     `ConvertGuestFormat`'s fallback, demoted in pgr4, does not fire in a
+     PGR3 race and stays a warning.
+   - **Checked** (2026-10-25), with the Las Vegas route from boot
+     (`scratch/run_pgr3.ps1`; the race came up in New York). At the
+     defaults (`logs/p7_log_default2.log`) the log holds 28 `[pgr3]` lines:
+     the adapter, the resolution scale, the precache progress and the input
+     script's markers, with nothing during the race. With
+     `--log_level=debug` (`logs/p7_log_debug.log`) the demoted lines are
+     back. The xenos build compiles; its log is not checked.
+2. **A short F4 settings menu.** `gpu/settings_overlay.{h,cpp}` is pgr4's,
+   installed from `Pgr3App::OnCreateDialogs`. It has its own bind,
+   `bind_pgr3_settings`, on the SDK bind's key, and the SDK's `bind_settings`
+   is unregistered and emptied. It lists fullscreen, `pgr3_fps_limit`,
+   `pgr3_vsync`, `pgr3_resolution_scale`, `pgr3_supersampling`,
+   `pgr3_msaa`, `pgr3_fxaa`, `pgr3_anisotropy`, `pgr3_shadow_scale`,
+   `pgr3_output_16bit` and `pgr3_display_correction`, with Save and
+   "All settings...", which opens the SDK dialog. PGR3 has no road
+   reflection view, so there is no reflection entry.
+   - **Restart-only options:** `pgr3_resolution_scale`,
+     `pgr3_supersampling`, `pgr3_msaa`, `pgr3_shadow_scale` and
+     `pgr3_output_16bit` are now `kRequiresRestart`, so both menus mark
+     them. `pgr3_msaa` is latched on first read, as in pgr4, so that a
+     change mid-run can't pair a multisampled surface with a single-sampled
+     one.
+   - **Live options:** fullscreen, the frame rate limit, vsync, FXAA,
+     anisotropy and display correction are read per frame or per sampler.
+   - **Built**, not yet checked on screen. Both exes build. Still to check:
+     F4 in the front end and a race, each live control, fullscreen both
+     ways in a race, Save writing `pgr3.toml`, and the Vulkan exe.
+3. **Console defaults.** `pgr3_resolution_scale` and `pgr3_shadow_scale` now
+   default to 1: the console's 1024x600 scene in a 1280x720 frame, and its
+   512x512 and 256x256 car shadow maps. They had defaulted to 0 (from the
+   output height, 2x on a 1080p window) and 2. Higher settings are a choice
+   in the F4 menu (restart).
 
 ---
 

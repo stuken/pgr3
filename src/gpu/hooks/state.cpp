@@ -32,7 +32,9 @@
 REXCVAR_DEFINE_BOOL(pgr3_msaa, true, kCvarGroup,
                     "Render the guest's multisampled targets with the sample "
                     "count it asks for (PGR3: the race scene 2x, the "
-                    "environment passes 4x)");
+                    "environment passes 4x). Takes effect after a "
+                    "restart.")
+    .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
 
 REX_EXTERN(__imp__D3DDevice_SetRenderTarget);
 REX_EXTERN(__imp__D3DDevice_SetDepthStencilSurface);
@@ -76,7 +78,7 @@ bool GuestSurfaceDesc(PPCContext &ctx, u8 *base, u32 surface,
   static bool s_logged = false;
   if (!s_logged) {
     s_logged = true;
-    PGR3_INFO("D3DSurface_GetDesc(0x{:08X}): format=0x{:08X} type={} {}x{} "
+    PGR3_DEBUG("D3DSurface_GetDesc(0x{:08X}): format=0x{:08X} type={} {}x{} "
              "msaa={}",
              surface, u32(out.Format), u32(out.Type), u32(out.Width),
              u32(out.Height), u32(out.MultiSampleType));
@@ -87,7 +89,10 @@ bool GuestSurfaceDesc(PPCContext &ctx, u8 *base, u32 surface,
 // D3DMULTISAMPLE_TYPE (RB_SURFACE_INFO's MSAA_SAMPLES): 0 none, 1 2x, 2 4x.
 // Colour and depth bound together carry the same type, so they pair.
 u32 SurfaceSampleCount(const SurfaceDesc &desc) {
-  if (!REXCVAR_GET(pgr3_msaa))
+  // Read once: host surfaces are kept, so a change mid-run would pair a
+  // multisampled surface with a single-sampled one.
+  static const bool msaa = REXCVAR_GET(pgr3_msaa);
+  if (!msaa)
     return 1;
   const u32 samples = u32(desc.MultiSampleType) == 2   ? 4
                       : u32(desc.MultiSampleType) == 1 ? 2
@@ -227,7 +232,7 @@ void GrowDepthToCoverTarget() {
     return;
   const u32 w = std::max(ds->width, rt->width);
   const u32 h = std::max(ds->height, rt->height);
-  PGR3_INFO("depth surface grows {}x{} -> {}x{} to cover its render target",
+  PGR3_DEBUG("depth surface grows {}x{} -> {}x{} to cover its render target",
            ds->width, ds->height, w, h);
   pgr3::gpu::Video::ResizeTexture(ds, w, h);
   s.draw_framebuffer_bound = false;

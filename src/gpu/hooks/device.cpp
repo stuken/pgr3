@@ -108,7 +108,7 @@ void BindDefaultSurfaces(u32 device_va, u32 params_va) {
       SetDepthStencilSurface(device_va, depth);
   }
   pgr3::gpu::NoteDefaultSurfaces(back, depth);
-  PGR3_INFO("Direct3D_CreateDevice: {}x{} back buffer 0x{:08X} (format "
+  PGR3_DEBUG("Direct3D_CreateDevice: {}x{} back buffer 0x{:08X} (format "
            "0x{:08X}), depth 0x{:08X} (format 0x{:08X})",
            width, height, back, u32(pp->BackBufferFormat), depth,
            u32(pp->AutoDepthStencilFormat));
@@ -162,7 +162,7 @@ u32 Direct3D_CreateDevice_hook(u32 /*adapter*/, u32 /*device_type*/,
 
   if (out_device)
     *out_device = device_va;
-  PGR3_INFO("Direct3D_CreateDevice: guest device at 0x{:08X}", device_va);
+  PGR3_DEBUG("Direct3D_CreateDevice: guest device at 0x{:08X}", device_va);
   return 0;
 }
 
@@ -225,7 +225,7 @@ std::atomic<u32> g_presents{0};
 u32 D3DDevice_Swap_hook(u32 /*device*/, u32 front_buffer) {
   const u32 s_presents = g_presents.fetch_add(1, std::memory_order_relaxed) + 1;
   if (s_presents == 1)
-    PGR3_INFO("D3DDevice_Swap: first frame (front buffer 0x{:08X})", front_buffer);
+    PGR3_DEBUG("D3DDevice_Swap: first frame (front buffer 0x{:08X})", front_buffer);
   if (s_presents == 60 || (s_presents % 600) == 0)
     pgr3::gpu::LogDrawStats(s_presents);
   // Places log lines on the present count pgr3_trace_frame, pgr3_dump_frames

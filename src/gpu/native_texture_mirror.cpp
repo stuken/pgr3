@@ -11,6 +11,7 @@
 #include <functional>
 #include <atomic>
 #include <cstring>
+#include <format>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -541,13 +542,22 @@ GuestTexture *GetOrCreateNativeMirror(u32 guest_va) {
                          fetch.dimension == xe::DataDimension::k3D;
   if (fetch.type != xe::FetchConstantType::kTexture || !supported_dim ||
       !(dxt || rgba8) || !endian_ok || !linear_ok) {
-    // Capped: an unsupported texture is retried every frame it is bound.
-    PGR3_WARN_FIRST(64, "native texture rejected va=0x{:08X} fetch1=0x{:08X} type={} dim={} "
-            "fmt=0x{:X} endian={} tiled={} {}x{}x{}",
-            guest_va, reinterpret_cast<const u32 *>(&fetch)[1], u32(fetch.type),
-            u32(fetch.dimension), u32(fetch.format), u32(fetch.endianness),
-            u32(fetch.tiled), FetchWidth(fetch), FetchHeight(fetch),
-            FetchDepth(fetch));
+    const std::string desc = std::format(
+        "va=0x{:08X} fetch1=0x{:08X} type={} dim={} fmt=0x{:X} endian={} "
+        "tiled={} {}x{}x{}",
+        guest_va, reinterpret_cast<const u32 *>(&fetch)[1], u32(fetch.type),
+        u32(fetch.dimension), u32(fetch.format), u32(fetch.endianness),
+        u32(fetch.tiled), FetchWidth(fetch), FetchHeight(fetch),
+        FetchDepth(fetch));
+    // Capped: an unsupported texture is retried every frame it is bound. A
+    // tiled one in a format no mirror takes is a resolve destination sampled
+    // before its first resolve, which every race's first frame does (the
+    // scene depth, the rear-view mirror, the adaptation value).
+    if (fetch.type == xe::FetchConstantType::kTexture && fetch.tiled &&
+        !(dxt || rgba8))
+      PGR3_DEBUG_FIRST(64, "native texture before its first resolve {}", desc);
+    else
+      PGR3_WARN_FIRST(64, "native texture rejected {}", desc);
     return nullptr;
   }
 
