@@ -18,7 +18,7 @@ than repeating it. SDK: rexglue 0.10.0.
 | 4. D3D identification (XDK 2099) | **Done.** `config/d3d.toml` names 74 functions, including `BeginTiling`/`EndTiling` and `XPhysicalAlloc`/`Free`. `src/gpu/d3d.h` has the 2099 device and resource layouts, every field checked against PGR3's code. The render setup is confirmed: 1024x600, 2x MSAA, 7e3. See Phase 4 findings. |
 | 5. Native renderer bring-up | **In progress.** rr6's renderer is ported and runs PGR3 on D3D12 and Vulkan from boot through the front end, garage and menus into a London race. The race now has its full scenery: trees, crowd, fences, lane markings and textured buildings. Instanced fetches are pulled in the shader. Rect lists are expanded to quads. Depth resolves feed the shadow maps. Constants the game writes into the ring, and the bool constants, reach the host. MSAA is modelled (2x scene, 4x environment). Every city, the night races, replays and movies have been checked against xenos. See Phase 5 progress. |
 | 6. Hardening and performance | **In progress.** Race frames hold 60 fps at 2x scale (the default until Phase 7); see Phase 6 progress. |
-| 7. User-facing polish | **Started.** Renderer diagnostics are at the debug log level (a race logs only the adapter, the scale, the precache summary and the input script's markers), F4 opens a short settings menu (built, not yet checked on screen), and the resolution and shadow scales default to the console's. See Phase 7. |
+| 7. User-facing polish | **Started.** Renderer diagnostics are at the debug log level (a race logs only the adapter, the scale, the precache summary and the input script's markers), F1 opens a short settings menu with a Quit game button (built, not yet checked on screen), and the resolution and shadow scales default to the console's. See Phase 7. |
 
 ## What we know about PGR3
 
@@ -990,14 +990,15 @@ item changes what a frame looks like at the defaults.
      script's markers, with nothing during the race. With
      `--log_level=debug` (`logs/p7_log_debug.log`) the demoted lines are
      back. The xenos build compiles; its log is not checked.
-2. **A short F4 settings menu.** `gpu/settings_overlay.{h,cpp}` is pgr4's,
-   installed from `Pgr3App::OnCreateDialogs`. It has its own bind,
-   `bind_pgr3_settings`, on the SDK bind's key, and the SDK's `bind_settings`
-   is unregistered and emptied. It lists fullscreen, `pgr3_fps_limit`,
+2. **A short settings menu (F1; first built on F4).**
+   `gpu/settings_overlay.{h,cpp}` is pgr4's, installed from
+   `Pgr3App::OnCreateDialogs`. It has its own bind, `bind_pgr3_settings`, on
+   F1, and the SDK's `bind_settings` is left on F4. It lists fullscreen, `pgr3_fps_limit`,
    `pgr3_vsync`, `pgr3_resolution_scale`, `pgr3_supersampling`,
    `pgr3_msaa`, `pgr3_fxaa`, `pgr3_anisotropy`, `pgr3_shadow_scale`,
-   `pgr3_output_16bit` and `pgr3_display_correction`, with Save and
-   "All settings...", which opens the SDK dialog. PGR3 has no road
+   `pgr3_output_16bit` and `pgr3_display_correction`, with Save, a
+   greyed hint naming the SDK bind's key ("F4: all settings") and a Quit
+   game button. PGR3 has no road
    reflection view, so there is no reflection entry.
    - **Restart-only options:** `pgr3_resolution_scale`,
      `pgr3_supersampling`, `pgr3_msaa`, `pgr3_shadow_scale` and
@@ -1008,13 +1009,23 @@ item changes what a frame looks like at the defaults.
    - **Live options:** fullscreen, the frame rate limit, vsync, FXAA,
      anisotropy and display correction are read per frame or per sampler.
    - **Built**, not yet checked on screen. Both exes build. Still to check:
-     F4 in the front end and a race, each live control, fullscreen both
-     ways in a race, Save writing `pgr3.toml`, and the Vulkan exe.
+     F1 in the front end and a race, each live control, fullscreen both
+     ways in a race, Save writing `pgr3.toml`, Quit game, and the Vulkan
+     exe.
+   - **Moved to F1, with Quit** (2026-10-27), as in pgr4. F1 is free: the
+     SDK binds only F3, Backtick, F4 and F7. The "All settings..." button is
+     gone, since a second `SettingsDialog` would draw into the SDK's own
+     `Settings##rex` window, so `bind_settings` is no longer taken over and
+     F4 opens the SDK's full dialog as before. "Quit game" asks for
+     confirmation (Escape cancels); the click lands inside the ImGui draw,
+     nested in Present's synchronous UI call, so `Pgr3App` posts
+     `RequestShutdown(ShutdownReason::MenuQuit)` with
+     `CallInUIThreadDeferred` and the ordered exit runs from the next pump.
 3. **Console defaults.** `pgr3_resolution_scale` and `pgr3_shadow_scale` now
    default to 1: the console's 1024x600 scene in a 1280x720 frame, and its
    512x512 and 256x256 car shadow maps. They had defaulted to 0 (from the
    output height, 2x on a 1080p window) and 2. Higher settings are a choice
-   in the F4 menu (restart).
+   in the F1 menu (restart).
 
 ---
 
